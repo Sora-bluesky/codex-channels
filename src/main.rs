@@ -1,17 +1,11 @@
-mod codex;
-mod config;
-mod engine;
-mod service;
-mod store;
-mod telegram;
-mod windows_secret;
-
 use std::fs;
 
 use anyhow::Result;
-use config::{Config, RunMode};
+use codex_telegram_bridge::config::{Config, RunMode};
+use codex_telegram_bridge::engine;
+use codex_telegram_bridge::service;
+use codex_telegram_bridge::windows_secret::{delete_secret, store_secret};
 use tracing_subscriber::EnvFilter;
-use windows_secret::{delete_secret, store_secret};
 
 #[tokio::main]
 async fn main() -> Result<()> {
