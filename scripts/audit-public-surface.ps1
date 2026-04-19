@@ -24,20 +24,7 @@ function Test-Tracked {
     return ($TrackedFiles -contains $Path)
 }
 
-function Test-RepoFileExists {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RepoRoot,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    return (Test-Path -LiteralPath (Join-Path $RepoRoot $Path))
-}
-
 $trackedFiles = Get-TrackedFiles
-$repoRoot = (Resolve-Path '.').Path
 $failures = New-Object System.Collections.Generic.List[string]
 
 $requiredTracked = @(
@@ -48,6 +35,7 @@ $requiredTracked = @(
     'scripts/planning-paths.ps1',
     'scripts/setup-planning.ps1',
     'scripts/sync-roadmap.ps1'
+    'scripts/validate-planning.ps1'
 )
 
 $forbiddenTracked = @(
@@ -57,8 +45,8 @@ $forbiddenTracked = @(
 )
 
 foreach ($path in $requiredTracked) {
-    if (-not (Test-RepoFileExists -RepoRoot $repoRoot -Path $path)) {
-        $failures.Add("missing required file: $path") | Out-Null
+    if (-not (Test-Tracked -TrackedFiles $trackedFiles -Path $path)) {
+        $failures.Add("missing tracked file: $path") | Out-Null
     }
 }
 
