@@ -79,6 +79,12 @@ cargo run -- service stop
 cargo run -- service uninstall
 ```
 
+7. Sync the external roadmap view when backlog changes:
+
+```powershell
+pwsh -NoProfile -File scripts/sync-roadmap.ps1
+```
+
 ## Configuration
 
 The main local config file is [`bridge.toml`](bridge.toml).
@@ -156,6 +162,20 @@ The `main` branch is protected and requires:
 - resolved conversations
 - passing `ci`
 
+## Planning
+
+Maintainer planning files live outside the repository, following the same pattern as `winsmux`.
+
+- `scripts/sync-roadmap.ps1` reads `backlog.yaml` and writes `ROADMAP.md`
+- `scripts/planning-paths.ps1` resolves the planning root from `CODEX_CHANNELS_PLANNING_ROOT` or `%LOCALAPPDATA%\\codex-channels\\planning-root.txt`
+- tracked files under `tasks/` are example-only bootstrap files
+
+Files resolved by the planning root:
+
+- `backlog.yaml`
+- `ROADMAP.md`
+- `roadmap-title-ja.psd1`
+
 ## Repository Layout
 
 ```text
@@ -170,4 +190,5 @@ src/engine.rs          lane execution loop
 src/windows_secret.rs  DPAPI secret storage
 src/service.rs         Windows service host
 tests/checks_runner.rs completion-check tests
+tests/roadmap_sync.rs  roadmap sync tests
 ```
