@@ -21,6 +21,19 @@ fn write_file(path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
+fn run_validate_planning(backlog_path: &Path, title_path: &Path) -> Result<std::process::Output> {
+    Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(repo_root().join("scripts").join("validate-planning.ps1"))
+        .arg("-BacklogPath")
+        .arg(backlog_path)
+        .arg("-RoadmapTitleJaPath")
+        .arg(title_path)
+        .output()
+        .context("failed to run validate-planning.ps1")
+}
+
 #[test]
 fn sync_roadmap_generates_grouped_japanese_view() -> Result<()> {
     let temp = TempDir::new()?;
@@ -245,6 +258,128 @@ fn setup_planning_does_not_update_marker_when_sync_fails() -> Result<()> {
     assert_eq!(
         fs::read_to_string(&marker_path)?,
         previous_root.display().to_string()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn validate_planning_accepts_well_formed_inputs() -> Result<()> {
+    let temp = TempDir::new()?;
+    let backlog_path = temp.path().join("backlog.yaml");
+    let title_path = temp.path().join("roadmap-title-ja.psd1");
+
+    write_file(
+        &backlog_path,
+        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.0\n    repo: codex-channels\n",
+    )?;
+    write_file(
+        &title_path,
+        "@{\n    VersionTitles = @{ \"v0.1.0\" = \"基盤\" }\n    TaskTitles = @{ \"TASK-001\" = \"ブリッジ基盤を作成\" }\n}\n",
+    )?;
+
+    let output = run_validate_planning(&backlog_path, &title_path)?;
+    assert!(
+        output.status.success(),
+        "validate-planning failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn validate_planning_rejects_missing_required_backlog_fields() -> Result<()> {
+    let temp = TempDir::new()?;
+    let backlog_path = temp.path().join("backlog.yaml");
+    let title_path = temp.path().join("roadmap-title-ja.psd1");
+
+    write_file(
+        &backlog_path,
+        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    repo: codex-channels\n",
+    )?;
+    write_file(
+        &title_path,
+        "@{\n    VersionTitles = @{}\n    TaskTitles = @{}\n}\n",
+    )?;
+
+    let output = run_validate_planning(&backlog_path, &title_path)?;
+    assert!(
+        !output.status.success(),
+        "validate-planning unexpectedly succeeded"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("target_version"),
+        "stderr did not mention missing field: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn validate_planning_rejects_invalid_localization_file() -> Result<()> {
+    let temp = TempDir::new()?;
+    let backlog_path = temp.path().join("backlog.yaml");
+    let title_path = temp.path().join("roadmap-title-ja.psd1");
+
+    write_file(
+        &backlog_path,
+        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.0\n    repo: codex-channels\n",
+    )?;
+    write_file(&title_path, "@{\nVersionTitles =\n")?;
+
+    let output = run_validate_planning(&backlog_path, &title_path)?;
+    assert!(
+        !output.status.success(),
+        "validate-planning unexpectedly succeeded"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("roadmap-title-ja.psd1"),
+        "stderr did not mention localization file: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn validate_planning_rejects_invalid_backlog_values() -> Result<()> {
+    let temp = TempDir::new()?;
+    let backlog_path = temp.path().join("backlog.yaml");
+    let title_path = temp.path().join("roadmap-title-ja.psd1");
+
+    write_file(
+        &backlog_path,
+        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: progress\n    priority: HIGH\n    target_version: 1.0.0\n    repo: codex-channels\n\n- id: TASK-001\n    title: Add validation\n    status: active\n    priority: P1\n    target_version: v0.1.0\n    repo: codex-channels\n",
+    )?;
+    write_file(
+        &title_path,
+        "@{\n    VersionTitles = @{}\n    TaskTitles = @{}\n}\n",
+    )?;
+
+    let output = run_validate_planning(&backlog_path, &title_path)?;
+    assert!(
+        !output.status.success(),
+        "validate-planning unexpectedly succeeded"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid status"),
+        "stderr missing status: {stderr}"
+    );
+    assert!(
+        stderr.contains("invalid priority"),
+        "stderr missing priority: {stderr}"
+    );
+    assert!(
+        stderr.contains("invalid target_version"),
+        "stderr missing target_version: {stderr}"
+    );
+    assert!(
+        stderr.contains("duplicated"),
+        "stderr missing duplicate: {stderr}"
     );
 
     Ok(())

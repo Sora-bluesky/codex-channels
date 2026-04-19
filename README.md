@@ -85,7 +85,13 @@ cargo run -- service uninstall
 pwsh -NoProfile -File scripts/sync-roadmap.ps1
 ```
 
-8. Initialize the external planning workspace in one step:
+8. Validate planning inputs before syncing:
+
+```powershell
+pwsh -NoProfile -File scripts/validate-planning.ps1
+```
+
+9. Initialize the external planning workspace in one step:
 
 ```powershell
 pwsh -NoProfile -File scripts/setup-planning.ps1
@@ -175,6 +181,7 @@ The `main` branch is protected and requires:
 Maintainer planning files live outside the repository, following the same pattern as `winsmux`.
 
 - `scripts/sync-roadmap.ps1` reads `backlog.yaml` and writes `ROADMAP.md`
+- `scripts/validate-planning.ps1` checks `backlog.yaml` and `roadmap-title-ja.psd1` before sync
 - `scripts/setup-planning.ps1` creates the external planning root, writes the marker, copies examples, and runs the first sync
 - `scripts/planning-paths.ps1` resolves the planning root from `CODEX_CHANNELS_PLANNING_ROOT` or `%LOCALAPPDATA%\\codex-channels\\planning-root.txt`
 - tracked files under `tasks/` are example-only bootstrap files
