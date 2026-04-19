@@ -204,7 +204,7 @@ Run command:
 cargo test --features live-e2e --test live_end_to_end -- --ignored --nocapture
 ```
 
-Use a dedicated test chat. The test sends instructions to that chat, then waits for you to reply to the bot with the exact one-line prompt shown in Telegram.
+Use a dedicated test bot and chat when possible. The test clears pending updates before startup, sends instructions to that chat, then waits for you to reply to the bot with the exact one-line prompt shown in Telegram.
 
 The `main` branch is protected and requires:
 

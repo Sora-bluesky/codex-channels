@@ -25,22 +25,29 @@ async fn live_end_to_end_bridge_round_trip() -> Result<()> {
     );
     let inbound_prompt = format!("Reply with the exact text {nonce} and nothing else.");
 
-    let bridge_exe = bridge_binary()?;
-    let mut child = spawn_bridge(&bridge_exe, &config_path, &live.bot_token)?;
-    let start = Instant::now();
-
+    drain_pending_updates(&live.bot_token).await?;
     try_send_instruction(&live, &inbound_prompt).await?;
     eprintln!(
         "live e2e instruction sent to chat {}. Reply to the bot with:\n{}",
         live.chat_id, inbound_prompt
     );
 
+    let bridge_exe = bridge_binary()?;
+    let mut child = ChildGuard::new(spawn_bridge(&bridge_exe, &config_path, &live.bot_token)?);
+    let start = Instant::now();
     let timeout = Duration::from_secs(live.timeout_sec);
     let inbound_deadline = start + timeout;
-    wait_for_inbound(&db_path, live.sender_id, &inbound_prompt, inbound_deadline).await?;
-    wait_for_outbound(&db_path, &nonce, inbound_deadline).await?;
+    wait_for_inbound(
+        &db_path,
+        live.sender_id,
+        &inbound_prompt,
+        inbound_deadline,
+        &mut child,
+    )
+    .await?;
+    wait_for_outbound(&db_path, &nonce, inbound_deadline, &mut child).await?;
 
-    stop_child(&mut child);
+    child.stop();
     Ok(())
 }
 
@@ -100,17 +107,17 @@ allowed_chat_types = ["private"]
 admin_sender_ids = [{sender_id}]
 
 [codex]
-binary = "{codex_bin}"
+binary = {codex_bin}
 model = "gpt-5.4"
 sandbox = "read-only"
 approval = "never"
 profile = "default"
 
 [storage]
-db_path = "{db_path}"
-state_dir = "{state_dir}"
-temp_dir = "{temp_dir}"
-log_dir = "{log_dir}"
+db_path = {db_path}
+state_dir = {state_dir}
+temp_dir = {temp_dir}
+log_dir = {log_dir}
 
 [policy]
 default_mode = "await_reply"
@@ -120,23 +127,19 @@ max_turns_limit = 3
 
 [[workspaces]]
 id = "main"
-path = "{workspace}"
-writable_roots = ["{workspace}"]
+path = {workspace}
+writable_roots = [{workspace}]
 default_mode = "await_reply"
 continue_prompt = "continue"
 checks_profile = "default"
 "#,
         sender_id = live.sender_id,
-        codex_bin = live.codex_bin.replace('\\', "/"),
-        db_path = state_dir
-            .join("bridge.db")
-            .display()
-            .to_string()
-            .replace('\\', "/"),
-        state_dir = state_dir.display().to_string().replace('\\', "/"),
-        temp_dir = temp_dir.display().to_string().replace('\\', "/"),
-        log_dir = log_dir.display().to_string().replace('\\', "/"),
-        workspace = live.workspace.display().to_string().replace('\\', "/"),
+        codex_bin = toml_string(&live.codex_bin),
+        db_path = toml_string(&state_dir.join("bridge.db").display().to_string()),
+        state_dir = toml_string(&state_dir.display().to_string()),
+        temp_dir = toml_string(&temp_dir.display().to_string()),
+        log_dir = toml_string(&log_dir.display().to_string()),
+        workspace = toml_string(&live.workspace.display().to_string()),
     );
     fs::write(&config_path, config)?;
     Ok(config_path)
@@ -186,13 +189,54 @@ async fn try_send_instruction(live: &LiveEnv, inbound_prompt: &str) -> Result<()
     Ok(())
 }
 
+async fn drain_pending_updates(bot_token: &str) -> Result<()> {
+    let client = Client::new();
+    let mut offset = None;
+
+    loop {
+        let payload = serde_json::json!({
+            "offset": offset,
+            "timeout": 0,
+            "allowed_updates": ["message", "edited_message"],
+        });
+        let response = client
+            .post(format!(
+                "https://api.telegram.org/bot{}/getUpdates",
+                bot_token
+            ))
+            .json(&payload)
+            .send()
+            .await
+            .context("failed to fetch pending Telegram updates")?
+            .error_for_status()
+            .context("telegram getUpdates returned error status")?
+            .json::<serde_json::Value>()
+            .await
+            .context("failed to decode pending Telegram updates")?;
+
+        let Some(results) = response.get("result").and_then(|value| value.as_array()) else {
+            bail!("telegram getUpdates response is missing result array");
+        };
+        let Some(last_update_id) = results
+            .iter()
+            .filter_map(|item| item.get("update_id").and_then(|value| value.as_i64()))
+            .max()
+        else {
+            return Ok(());
+        };
+        offset = Some(last_update_id + 1);
+    }
+}
+
 async fn wait_for_inbound(
     db_path: &Path,
     sender_id: i64,
     inbound_prompt: &str,
     deadline: Instant,
+    child: &mut ChildGuard,
 ) -> Result<()> {
     while Instant::now() < deadline {
+        ensure_child_alive(child)?;
         if let Some(found) = find_inbound_text(db_path, sender_id, inbound_prompt)? {
             eprintln!("received inbound text: {found}");
             return Ok(());
@@ -209,8 +253,10 @@ async fn wait_for_outbound(
     db_path: &Path,
     expected_fragment: &str,
     deadline: Instant,
+    child: &mut ChildGuard,
 ) -> Result<()> {
     while Instant::now() < deadline {
+        ensure_child_alive(child)?;
         if let Some(found) = find_outbound_text(db_path, expected_fragment)? {
             eprintln!("received outbound text: {found}");
             return Ok(());
@@ -275,7 +321,43 @@ where
         .context("sqlite live-e2e query failed")
 }
 
-fn stop_child(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
+fn ensure_child_alive(child: &mut ChildGuard) -> Result<()> {
+    if let Some(status) = child.try_wait()? {
+        bail!("bridge exited early with status {status}");
+    }
+    Ok(())
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.escape_default())
+}
+
+struct ChildGuard {
+    child: Option<Child>,
+}
+
+impl ChildGuard {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        match self.child.as_mut() {
+            Some(child) => child.try_wait().context("failed to query bridge process"),
+            None => Ok(None),
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
