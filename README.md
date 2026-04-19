@@ -23,7 +23,6 @@ Implemented today:
 
 Not implemented yet:
 
-- production-grade service installation flow
 - end-to-end tests around live Telegram and `codex` execution
 
 ## Requirements
@@ -63,6 +62,21 @@ cargo check
 /status
 /stop
 /mode completion_checks
+```
+
+6. Install the Windows service when you want background execution:
+
+```powershell
+cargo run -- service install --config bridge.toml
+cargo run -- service start
+cargo run -- service status
+```
+
+Stop or remove it later:
+
+```powershell
+cargo run -- service stop
+cargo run -- service uninstall
 ```
 
 ## Configuration
@@ -146,6 +160,7 @@ The `main` branch is protected and requires:
 
 ```text
 src/main.rs            startup and CLI entry
+src/cli.rs             CLI parsing for secrets and service control
 src/config.rs          config types and validation
 src/checks.rs          completion-check runner
 src/store.rs           SQLite persistence
