@@ -154,7 +154,7 @@ fn secret_surface_audit_rejects_bot_token_like_values() -> Result<()> {
 }
 
 #[test]
-fn live_planning_files_stay_untracked_and_examples_stay_tracked() -> Result<()> {
+fn live_planning_files_and_task_contents_stay_untracked() -> Result<()> {
     let output = Command::new("git")
         .args(["ls-files"])
         .current_dir(repo_root())
@@ -168,12 +168,201 @@ fn live_planning_files_stay_untracked_and_examples_stay_tracked() -> Result<()> 
     );
 
     let tracked = String::from_utf8(output.stdout)?;
-    assert!(tracked.contains("tasks/backlog.example.yaml"));
-    assert!(tracked.contains("tasks/roadmap-title-ja.example.psd1"));
-    assert!(tracked.contains("tasks/ROADMAP.example.md"));
+    assert!(tracked.contains("tasks/README.md"));
+    assert!(!tracked.contains("tasks/backlog.example.yaml"));
+    assert!(!tracked.contains("tasks/roadmap-title-ja.example.psd1"));
+    assert!(!tracked.contains("tasks/ROADMAP.example.md"));
     assert!(!tracked.contains("tasks/backlog.yaml"));
     assert!(!tracked.contains("tasks/roadmap-title-ja.psd1"));
     assert!(!tracked.contains("docs/project/ROADMAP.md"));
+
+    Ok(())
+}
+
+#[test]
+fn public_surface_audit_rejects_live_planning_files_present_in_repo() -> Result<()> {
+    let repo = tempdir()?;
+    initialize_git_repo(repo.path())?;
+    let script_path = repo.path().join("audit-public-surface.ps1");
+    std::fs::copy(
+        repo_root().join("scripts").join("audit-public-surface.ps1"),
+        &script_path,
+    )?;
+    std::fs::create_dir_all(repo.path().join("tasks"))?;
+    std::fs::write(
+        repo.path().join("tasks").join("README.md"),
+        "internal helper\n",
+    )?;
+    std::fs::write(
+        repo.path().join("tasks").join("backlog.yaml"),
+        "- id: TASK-001\n",
+    )?;
+    std::fs::create_dir_all(repo.path().join("scripts"))?;
+    for script in [
+        "audit-doc-terminology.ps1",
+        "audit-secret-surface.ps1",
+        "planning-paths.ps1",
+        "setup-planning.ps1",
+        "sync-roadmap.ps1",
+        "validate-planning.ps1",
+    ] {
+        std::fs::copy(
+            repo_root().join("scripts").join(script),
+            repo.path().join("scripts").join(script),
+        )?;
+    }
+    for tracked_path in [
+        "tasks/README.md",
+        "scripts/audit-doc-terminology.ps1",
+        "scripts/audit-secret-surface.ps1",
+        "scripts/planning-paths.ps1",
+        "scripts/setup-planning.ps1",
+        "scripts/sync-roadmap.ps1",
+        "scripts/validate-planning.ps1",
+    ] {
+        git_add(repo.path(), tracked_path)?;
+    }
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(&script_path)
+        .current_dir(repo.path())
+        .output()
+        .with_context(|| format!("failed to run {}", script_path.display()))?;
+
+    assert!(
+        !output.status.success(),
+        "audit-public-surface should reject live planning files"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("forbidden live file present in repo"));
+
+    Ok(())
+}
+
+#[test]
+fn public_surface_audit_rejects_unexpected_tracked_task_files() -> Result<()> {
+    let repo = tempdir()?;
+    initialize_git_repo(repo.path())?;
+    let script_path = repo.path().join("audit-public-surface.ps1");
+    std::fs::copy(
+        repo_root().join("scripts").join("audit-public-surface.ps1"),
+        &script_path,
+    )?;
+    std::fs::create_dir_all(repo.path().join("tasks"))?;
+    std::fs::write(
+        repo.path().join("tasks").join("README.md"),
+        "internal helper\n",
+    )?;
+    std::fs::write(
+        repo.path().join("tasks").join("notes.md"),
+        "private notes\n",
+    )?;
+    std::fs::create_dir_all(repo.path().join("scripts"))?;
+    for script in [
+        "audit-doc-terminology.ps1",
+        "audit-secret-surface.ps1",
+        "planning-paths.ps1",
+        "setup-planning.ps1",
+        "sync-roadmap.ps1",
+        "validate-planning.ps1",
+    ] {
+        std::fs::copy(
+            repo_root().join("scripts").join(script),
+            repo.path().join("scripts").join(script),
+        )?;
+    }
+    for tracked_path in [
+        "tasks/README.md",
+        "tasks/notes.md",
+        "scripts/audit-doc-terminology.ps1",
+        "scripts/audit-secret-surface.ps1",
+        "scripts/planning-paths.ps1",
+        "scripts/setup-planning.ps1",
+        "scripts/sync-roadmap.ps1",
+        "scripts/validate-planning.ps1",
+    ] {
+        git_add(repo.path(), tracked_path)?;
+    }
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(&script_path)
+        .current_dir(repo.path())
+        .output()
+        .with_context(|| format!("failed to run {}", script_path.display()))?;
+
+    assert!(
+        !output.status.success(),
+        "audit-public-surface should reject tracked task artifacts"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unexpected tracked task file: tasks/notes.md"));
+
+    Ok(())
+}
+
+#[test]
+fn public_surface_audit_rejects_live_planning_files_anywhere_in_repo() -> Result<()> {
+    let repo = tempdir()?;
+    initialize_git_repo(repo.path())?;
+    let script_path = repo.path().join("audit-public-surface.ps1");
+    std::fs::copy(
+        repo_root().join("scripts").join("audit-public-surface.ps1"),
+        &script_path,
+    )?;
+    std::fs::create_dir_all(repo.path().join("tasks"))?;
+    std::fs::write(
+        repo.path().join("tasks").join("README.md"),
+        "internal helper\n",
+    )?;
+    std::fs::create_dir_all(repo.path().join("private-planning"))?;
+    std::fs::write(
+        repo.path().join("private-planning").join("backlog.yaml"),
+        "- id: TASK-001\n",
+    )?;
+    std::fs::create_dir_all(repo.path().join("scripts"))?;
+    for script in [
+        "audit-doc-terminology.ps1",
+        "audit-secret-surface.ps1",
+        "planning-paths.ps1",
+        "setup-planning.ps1",
+        "sync-roadmap.ps1",
+        "validate-planning.ps1",
+    ] {
+        std::fs::copy(
+            repo_root().join("scripts").join(script),
+            repo.path().join("scripts").join(script),
+        )?;
+    }
+    for tracked_path in [
+        "tasks/README.md",
+        "scripts/audit-doc-terminology.ps1",
+        "scripts/audit-secret-surface.ps1",
+        "scripts/planning-paths.ps1",
+        "scripts/setup-planning.ps1",
+        "scripts/sync-roadmap.ps1",
+        "scripts/validate-planning.ps1",
+    ] {
+        git_add(repo.path(), tracked_path)?;
+    }
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(&script_path)
+        .current_dir(repo.path())
+        .output()
+        .with_context(|| format!("failed to run {}", script_path.display()))?;
+
+    assert!(
+        !output.status.success(),
+        "audit-public-surface should reject in-repo planning roots"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("forbidden live file present in repo: private-planning"));
 
     Ok(())
 }

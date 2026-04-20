@@ -142,3 +142,20 @@ function Resolve-CodexChannelsPlanningFilePath {
 
     return $localPath
 }
+
+function Resolve-CodexChannelsExternalPlanningFilePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EnvironmentVariable,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DefaultFileName
+    )
+
+    $explicitPath = [Environment]::GetEnvironmentVariable($EnvironmentVariable)
+    if (-not [string]::IsNullOrWhiteSpace($explicitPath)) {
+        return $explicitPath
+    }
+
+    return Join-Path (Get-CodexChannelsPlanningRoot) $DefaultFileName
+}

@@ -147,6 +147,82 @@ fn generate_release_notes_falls_back_to_planning_titles() -> Result<()> {
 }
 
 #[test]
+fn generate_release_notes_uses_backlog_env_override_when_no_argument_is_passed() -> Result<()> {
+    let temp = TempDir::new()?;
+    let history_path = temp.path().join("release-history.psd1");
+    let planning_root = temp.path().join("planning-root");
+    let explicit_backlog_path = temp.path().join("custom-backlog.yaml");
+    let output_path = temp.path().join("release-body.md");
+
+    write_file(
+        &history_path,
+        r#"@{
+    Releases = @(
+        @{
+            Version = "0.1.0"
+            Commit = "1111111111111111111111111111111111111111"
+            Title = "Foundation"
+            Notes = @("Initial release")
+        }
+    )
+}"#,
+    )?;
+    write_file(
+        &explicit_backlog_path,
+        r#"# === v0.1.1: Operator controls ===
+- id: TASK-001
+    title: Use explicit backlog override
+    status: done
+    priority: P0
+    target_version: v0.1.1
+    repo: codex-channels
+"#,
+    )?;
+    write_file(
+        &planning_root.join("backlog.yaml"),
+        r#"# === v0.1.1: Wrong source ===
+- id: TASK-999
+    title: Wrong backlog source
+    status: done
+    priority: P0
+    target_version: v0.1.1
+    repo: codex-channels
+"#,
+    )?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(
+            repo_root()
+                .join("scripts")
+                .join("generate-release-notes.ps1"),
+        )
+        .arg("-Version")
+        .arg("0.1.1")
+        .arg("-HistoryPath")
+        .arg(&history_path)
+        .arg("-OutputPath")
+        .arg(&output_path)
+        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .env("CODEX_CHANNELS_BACKLOG_PATH", &explicit_backlog_path)
+        .output()
+        .context("failed to run generate-release-notes.ps1 with env override")?;
+
+    assert!(
+        output.status.success(),
+        "generate-release-notes failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let body = fs::read_to_string(&output_path)?;
+    assert!(body.contains("Use explicit backlog override"));
+    assert!(!body.contains("Wrong backlog source"));
+
+    Ok(())
+}
+
+#[test]
 fn bump_version_sync_only_updates_version_sources() -> Result<()> {
     let temp = TempDir::new()?;
     let cargo_toml_path = temp.path().join("Cargo.toml");
@@ -183,6 +259,213 @@ edition = "2024"
     let cargo_toml = fs::read_to_string(&cargo_toml_path)?;
     assert!(cargo_toml.contains("version = \"0.1.8\""));
     assert_eq!(fs::read_to_string(&version_path)?, "0.1.8");
+
+    Ok(())
+}
+
+#[test]
+fn bump_version_fails_when_planning_inputs_are_missing() -> Result<()> {
+    let temp = TempDir::new()?;
+    let planning_root = temp.path().join("planning-root");
+    let cargo_toml_path = temp.path().join("Cargo.toml");
+    let version_path = temp.path().join("VERSION");
+
+    fs::create_dir_all(&planning_root)?;
+    write_file(
+        &cargo_toml_path,
+        r#"[package]
+name = "codex-telegram-bridge"
+version = "0.1.0"
+edition = "2024"
+"#,
+    )?;
+    write_file(&version_path, "0.1.0")?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(repo_root().join("scripts").join("bump-version.ps1"))
+        .arg("-RepoRoot")
+        .arg(temp.path())
+        .arg("-Version")
+        .arg("0.1.8")
+        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .output()
+        .context("failed to run bump-version.ps1 with missing planning inputs")?;
+
+    assert!(
+        !output.status.success(),
+        "bump-version unexpectedly succeeded"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("backlog.yaml not found"));
+    assert!(fs::read_to_string(&version_path)? == "0.1.0");
+
+    let cargo_toml = fs::read_to_string(&cargo_toml_path)?;
+    assert!(cargo_toml.contains("version = \"0.1.0\""));
+
+    Ok(())
+}
+
+#[test]
+fn release_preflight_allows_missing_title_map_when_backlog_exists() -> Result<()> {
+    let temp = TempDir::new()?;
+    let backlog_path = temp.path().join("backlog.yaml");
+    let missing_title_path = temp.path().join("roadmap-title-ja.psd1");
+
+    write_file(
+        &backlog_path,
+        r#"# === v0.1.8: Release ===
+- id: TASK-001
+    title: Keep backlog available
+    status: done
+    priority: P0
+    target_version: v0.1.8
+    repo: codex-channels
+"#,
+    )?;
+
+    let script = format!(
+        ". '{}' ; Assert-ReleasePlanningInputsExist -BacklogPath '{}' -RoadmapTitleJaPath '{}' ; 'ok'",
+        repo_root()
+            .join("scripts")
+            .join("release-common.ps1")
+            .display(),
+        backlog_path.display(),
+        missing_title_path.display(),
+    );
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-Command")
+        .arg(&script)
+        .output()
+        .context("failed to run release preflight assertion")?;
+
+    assert!(
+        output.status.success(),
+        "release preflight unexpectedly failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+
+    Ok(())
+}
+
+#[test]
+fn bump_version_fails_when_title_map_is_invalid() -> Result<()> {
+    let temp = TempDir::new()?;
+    let planning_root = temp.path().join("planning-root");
+    let cargo_toml_path = temp.path().join("Cargo.toml");
+    let version_path = temp.path().join("VERSION");
+
+    fs::create_dir_all(&planning_root)?;
+    write_file(
+        &cargo_toml_path,
+        r#"[package]
+name = "codex-telegram-bridge"
+version = "0.1.0"
+edition = "2024"
+"#,
+    )?;
+    write_file(&version_path, "0.1.0")?;
+    write_file(
+        &planning_root.join("backlog.yaml"),
+        r#"# === v0.1.8: Release ===
+- id: TASK-001
+    title: Keep backlog available
+    status: done
+    priority: P0
+    target_version: v0.1.8
+    repo: codex-channels
+"#,
+    )?;
+    write_file(
+        &planning_root.join("roadmap-title-ja.psd1"),
+        "@{\nVersionTitles =\n",
+    )?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(repo_root().join("scripts").join("bump-version.ps1"))
+        .arg("-RepoRoot")
+        .arg(temp.path())
+        .arg("-Version")
+        .arg("0.1.8")
+        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .output()
+        .context("failed to run bump-version.ps1 with invalid title map")?;
+
+    assert!(
+        !output.status.success(),
+        "bump-version unexpectedly succeeded"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("roadmap-title-ja.psd1 is invalid"));
+    assert_eq!(fs::read_to_string(&version_path)?, "0.1.0");
+
+    let cargo_toml = fs::read_to_string(&cargo_toml_path)?;
+    assert!(cargo_toml.contains("version = \"0.1.0\""));
+
+    Ok(())
+}
+
+#[test]
+fn bump_version_fails_when_backlog_is_invalid() -> Result<()> {
+    let temp = TempDir::new()?;
+    let planning_root = temp.path().join("planning-root");
+    let cargo_toml_path = temp.path().join("Cargo.toml");
+    let version_path = temp.path().join("VERSION");
+
+    fs::create_dir_all(&planning_root)?;
+    write_file(
+        &cargo_toml_path,
+        r#"[package]
+name = "codex-telegram-bridge"
+version = "0.1.0"
+edition = "2024"
+"#,
+    )?;
+    write_file(&version_path, "0.1.0")?;
+    write_file(
+        &planning_root.join("backlog.yaml"),
+        r#"# === v0.1.8: Release ===
+- id: TASK-001
+    title: Invalid backlog
+    status: progress
+    priority: P0
+    target_version: 0.1.8
+    repo: codex-channels
+"#,
+    )?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(repo_root().join("scripts").join("bump-version.ps1"))
+        .arg("-RepoRoot")
+        .arg(temp.path())
+        .arg("-Version")
+        .arg("0.1.8")
+        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .output()
+        .context("failed to run bump-version.ps1 with invalid backlog")?;
+
+    assert!(
+        !output.status.success(),
+        "bump-version unexpectedly succeeded"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("planning validation failed"));
+    assert!(stderr.contains("invalid status"));
+    assert_eq!(fs::read_to_string(&version_path)?, "0.1.0");
+
+    let cargo_toml = fs::read_to_string(&cargo_toml_path)?;
+    assert!(cargo_toml.contains("version = \"0.1.0\""));
 
     Ok(())
 }

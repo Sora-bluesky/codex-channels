@@ -13,11 +13,12 @@ $ErrorActionPreference = 'Stop'
 $resolvedRepoRoot = Resolve-CodexChannelsRepoRoot -RepoRoot $RepoRoot
 $versionFile = Join-Path $resolvedRepoRoot 'VERSION'
 $cargoTomlPath = Join-Path $resolvedRepoRoot 'Cargo.toml'
-$syncRoadmapScript = Join-Path $resolvedRepoRoot 'scripts/sync-roadmap.ps1'
-$generateNotesScript = Join-Path $resolvedRepoRoot 'scripts/generate-release-notes.ps1'
-$backlogPath = Resolve-CodexChannelsPlanningFilePath -RepoRoot $resolvedRepoRoot -LocalRelativePath 'tasks/backlog.example.yaml' -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
-$roadmapPath = Resolve-CodexChannelsPlanningFilePath -RepoRoot $resolvedRepoRoot -LocalRelativePath 'tasks/ROADMAP.example.md' -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
-$titlePath = Resolve-CodexChannelsPlanningFilePath -RepoRoot $resolvedRepoRoot -LocalRelativePath 'tasks/roadmap-title-ja.example.psd1' -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
+$syncRoadmapScript = Join-Path $PSScriptRoot 'sync-roadmap.ps1'
+$generateNotesScript = Join-Path $PSScriptRoot 'generate-release-notes.ps1'
+$validatePlanningScript = Join-Path $PSScriptRoot 'validate-planning.ps1'
+$backlogPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
+$roadmapPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
+$titlePath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     if (-not (Test-Path -LiteralPath $versionFile)) {
@@ -29,6 +30,12 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 $normalizedVersion = Normalize-ReleaseVersion -Version $Version
 $tag = Get-ReleaseTag -Version $normalizedVersion
+
+if (-not $SyncOnly) {
+    Assert-ReleasePlanningInputsExist -BacklogPath $backlogPath -RoadmapTitleJaPath $titlePath
+    & $validatePlanningScript -BacklogPath $backlogPath -RoadmapTitleJaPath $titlePath | Out-Null
+}
+
 [System.IO.File]::WriteAllText($versionFile, $normalizedVersion, [System.Text.UTF8Encoding]::new($false))
 Set-CargoPackageVersion -CargoTomlPath $cargoTomlPath -Version $normalizedVersion
 

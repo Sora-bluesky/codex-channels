@@ -31,6 +31,15 @@ jobs:
       - name: Test
         run: cargo test
 
+      - name: Setup planning validation files
+        shell: pwsh
+        run: |
+          $planningRoot = Join-Path $env:RUNNER_TEMP 'codex-channels-planning'
+          $markerPath = Join-Path $env:RUNNER_TEMP 'codex-channels-planning-root.txt'
+          "CODEX_CHANNELS_PLANNING_ROOT=$planningRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CODEX_CHANNELS_PLANNING_ROOT_MARKER=$markerPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          pwsh -NoProfile -File scripts/setup-planning.ps1 -PlanningRoot $planningRoot -MarkerPath $markerPath
+
       - name: Planning validation
         run: pwsh -NoProfile -File scripts/validate-planning.ps1
 

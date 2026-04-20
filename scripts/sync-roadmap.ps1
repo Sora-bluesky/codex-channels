@@ -227,13 +227,13 @@ function New-ProgressBar {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if ([string]::IsNullOrWhiteSpace($BacklogPath)) {
-    $BacklogPath = Resolve-CodexChannelsPlanningFilePath -RepoRoot $repoRoot -LocalRelativePath 'tasks/backlog.example.yaml' -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
+    $BacklogPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
 }
 if ([string]::IsNullOrWhiteSpace($RoadmapPath)) {
-    $RoadmapPath = Resolve-CodexChannelsPlanningFilePath -RepoRoot $repoRoot -LocalRelativePath 'tasks/ROADMAP.example.md' -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
+    $RoadmapPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
 }
 if ([string]::IsNullOrWhiteSpace($RoadmapTitleJaPath)) {
-    $RoadmapTitleJaPath = Resolve-CodexChannelsPlanningFilePath -RepoRoot $repoRoot -LocalRelativePath 'tasks/roadmap-title-ja.example.psd1' -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
+    $RoadmapTitleJaPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
 }
 
 $resolvedBacklogPath = Resolve-WorkspacePath -Path $BacklogPath
@@ -241,8 +241,8 @@ $resolvedRoadmapPath = Resolve-WorkspacePath -Path $RoadmapPath
 $resolvedRoadmapTitleJaPath = Resolve-WorkspacePath -Path $RoadmapTitleJaPath
 
 if (-not (Test-Path -LiteralPath $resolvedBacklogPath)) {
-    Write-Warning "Backlog not found: $resolvedBacklogPath"
-    exit 0
+    Write-Error "Backlog not found: $resolvedBacklogPath"
+    exit 1
 }
 
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
