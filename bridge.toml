@@ -13,6 +13,7 @@ binary = "codex"
 model = "gpt-5.4"
 sandbox = "workspace-write"
 approval = "on-request"
+transport = "exec"
 
 [storage]
 db_path = "state/bridge.db"

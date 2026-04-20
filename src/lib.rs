@@ -1,3 +1,4 @@
+pub mod app_server;
 pub mod cli;
 pub mod codex;
 pub mod config;

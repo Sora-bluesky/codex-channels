@@ -127,7 +127,64 @@ checks_profile = "default"
 
     let config = Config::load(&config_path)?;
     assert_eq!(config.policy.max_turns_limit, DEFAULT_MAX_TURNS_BUDGET);
+    assert_eq!(
+        config.codex.transport,
+        codex_telegram_bridge::config::CodexTransport::Exec
+    );
     assert_eq!(config.codex.profile, None);
+    Ok(())
+}
+
+#[test]
+fn config_loads_app_server_transport() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = [1]
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+transport = "app_server"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let config = Config::load(&config_path)?;
+    assert_eq!(
+        config.codex.transport,
+        codex_telegram_bridge::config::CodexTransport::AppServer
+    );
     Ok(())
 }
 

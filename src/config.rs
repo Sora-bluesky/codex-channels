@@ -48,7 +48,17 @@ pub struct CodexConfig {
     pub sandbox: String,
     pub approval: String,
     #[serde(default)]
+    pub transport: CodexTransport,
+    #[serde(default)]
     pub profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexTransport {
+    #[default]
+    Exec,
+    AppServer,
 }
 
 #[derive(Debug, Clone, Deserialize)]
