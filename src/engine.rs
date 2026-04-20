@@ -4,8 +4,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::codex::{CodexRequest, CodexRunner};
-use crate::config::{Config, LaneMode, checks::CheckRunSummary, checks::run_profile};
-use crate::store::{AuthorizedSender, LaneRecord, LaneState, NewRun, Store};
+use crate::config::{
+    CodexTransport, Config, LaneMode, checks::CheckRunSummary, checks::run_profile,
+};
+use crate::store::{ApprovalRequestStatus, AuthorizedSender, LaneRecord, LaneState, NewRun, Store};
 use crate::telegram::{
     IncomingMessage, SavedTelegramAttachment, TelegramAttachmentKind, TelegramClient,
     TelegramControlCommand,
@@ -101,20 +103,58 @@ async fn handle_message(
     store: &Store,
     telegram: &TelegramClient,
     codex: &CodexRunner,
-    _sender_id: i64,
+    sender_id: i64,
     update: IncomingMessage,
 ) -> Result<()> {
     let existing_lane = store.find_lane(update.chat_id, &update.thread_key)?;
     if let Some(command) = update.control_command() {
-        let reply = handle_control_command(
-            store,
-            config,
-            update.chat_id,
-            &update.thread_key,
-            existing_lane.as_ref(),
-            command,
-            config.policy.max_turns_limit,
-        )?;
+        let reply = match command {
+            TelegramControlCommand::Approve { request_id } => {
+                handle_approval_decision_message(
+                    config,
+                    store,
+                    telegram,
+                    codex,
+                    sender_id,
+                    update.chat_id,
+                    &update.thread_key,
+                    existing_lane.as_ref(),
+                    &request_id,
+                    true,
+                )
+                .await?
+            }
+            TelegramControlCommand::Deny { request_id } => {
+                handle_approval_decision_message(
+                    config,
+                    store,
+                    telegram,
+                    codex,
+                    sender_id,
+                    update.chat_id,
+                    &update.thread_key,
+                    existing_lane.as_ref(),
+                    &request_id,
+                    false,
+                )
+                .await?
+            }
+            other => handle_control_command(
+                store,
+                config,
+                sender_id,
+                update.chat_id,
+                &update.thread_key,
+                existing_lane.as_ref(),
+                other,
+                config.policy.max_turns_limit,
+            )?,
+        };
+        if let Some(callback_query_id) = update.callback_query_id.as_deref() {
+            let _ = telegram
+                .answer_callback_query(callback_query_id, Some(&reply))
+                .await;
+        }
         let sent = telegram.send_message(update.chat_id, &reply).await?;
         if let Some(lane) = store.find_lane(update.chat_id, &update.thread_key)? {
             store.insert_message(
@@ -249,11 +289,22 @@ async fn handle_message(
         LaneState::WaitingReply
     };
     store.update_lane_state(&lane.lane_id, next_state, outcome.session_id.as_deref())?;
+    persist_approval_requests(
+        store,
+        telegram,
+        update.chat_id,
+        &lane.lane_id,
+        &run.run_id,
+        &outcome.approval_requests,
+    )
+    .await?;
     store.finish_run(
         &run.run_id,
         outcome.exit_code,
         next_state.as_str(),
         outcome.approval_pending,
+        outcome.approval_request_count,
+        outcome.approval_resolved_count,
     )?;
 
     info!("handled lane {}", lane.lane_id);
@@ -263,6 +314,7 @@ async fn handle_message(
 fn handle_control_command(
     store: &Store,
     config: &Config,
+    sender_id: i64,
     chat_id: i64,
     thread_key: &str,
     lane: Option<&LaneRecord>,
@@ -274,6 +326,18 @@ fn handle_control_command(
         TelegramControlCommand::Status => Ok(format_status_message(
             lane.cloned(),
             default_max_turns_limit,
+            lane.map(|lane| {
+                store
+                    .list_pending_approval_requests_for_lane(&lane.lane_id)
+                    .map(|requests| {
+                        requests
+                            .into_iter()
+                            .map(|request| request.request_id)
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default(),
         )),
         TelegramControlCommand::Stop => {
             let Some(lane) = lane else {
@@ -310,7 +374,157 @@ fn handle_control_command(
                 format_lane_mode_details(mode, extra_turn_budget)
             ))
         }
+        TelegramControlCommand::Approve { request_id } => {
+            handle_approval_command(store, config, sender_id, &request_id, true)
+        }
+        TelegramControlCommand::Deny { request_id } => {
+            handle_approval_command(store, config, sender_id, &request_id, false)
+        }
     }
+}
+
+async fn handle_approval_decision_message(
+    config: &Config,
+    store: &Store,
+    telegram: &TelegramClient,
+    codex: &CodexRunner,
+    sender_id: i64,
+    chat_id: i64,
+    _thread_key: &str,
+    lane: Option<&LaneRecord>,
+    request_id: &str,
+    approved: bool,
+) -> Result<String> {
+    let Some(request) = store.find_approval_request(request_id)? else {
+        return Ok(format!("承認要求 `{request_id}` は見つかりません。"));
+    };
+    if request.request_kind == crate::store::ApprovalRequestKind::ToolUserInput {
+        return Ok(format!(
+            "承認要求 `{request_id}` は追加入力型のため、まだ処理できません。"
+        ));
+    }
+
+    let next_status = if approved {
+        ApprovalRequestStatus::Approved
+    } else {
+        ApprovalRequestStatus::Declined
+    };
+    if request.status != ApprovalRequestStatus::Pending {
+        return Ok(format!(
+            "承認要求 `{request_id}` はすでに処理済みです。現在の状態: `{}`",
+            approval_status_name(request.status)
+        ));
+    }
+
+    if config.codex.transport == CodexTransport::Exec {
+        store.resolve_approval_request(request_id, next_status, sender_id)?;
+        return Ok(format!(
+            "承認要求 `{request_id}` を {} として記録しました。`app_server` を有効にすると、そのまま継続へ返せます。",
+            if approved { "承認" } else { "非承認" }
+        ));
+    }
+
+    let lane = lane.ok_or_else(|| anyhow!("承認対象のレーンが見つかりません。"))?;
+    let workspace = resolve_workspace(config, Some(lane))?;
+    let continued_outcome = codex.resolve_approval(&request, approved).await?;
+    let (outcome, unresolved_checks, auto_turns_completed) =
+        continue_lane_after_completion(config, workspace, codex, lane, continued_outcome).await?;
+    store.resolve_approval_request(request_id, next_status, sender_id)?;
+
+    let run = store.insert_run(NewRun {
+        lane_id: lane.lane_id.clone(),
+        run_kind: "approval_resume".to_owned(),
+    })?;
+    let next_state = if outcome.approval_pending {
+        LaneState::NeedsLocalApproval
+    } else if unresolved_checks.is_some() {
+        LaneState::Failed
+    } else {
+        LaneState::WaitingReply
+    };
+    store.update_lane_state(&lane.lane_id, next_state, outcome.session_id.as_deref())?;
+    persist_approval_requests(
+        store,
+        telegram,
+        chat_id,
+        &lane.lane_id,
+        &run.run_id,
+        &outcome.approval_requests,
+    )
+    .await?;
+    store.finish_run(
+        &run.run_id,
+        outcome.exit_code,
+        next_state.as_str(),
+        outcome.approval_pending,
+        outcome.approval_request_count,
+        outcome.approval_resolved_count,
+    )?;
+
+    if let Some(message_id) = request.telegram_message_id {
+        let status_text = format_approval_resolution_message(request_id, approved);
+        let _ = telegram
+            .edit_message(chat_id, message_id, &status_text)
+            .await;
+    }
+
+    if outcome.approval_pending {
+        return Ok(format!(
+            "{} 次の承認待ちを送信しました。",
+            format_approval_resolution_message(request_id, approved)
+        ));
+    }
+
+    let reply = if outcome.approval_pending {
+        format_approval_pending_message(outcome.approval_requests.len())
+    } else if let Some(summary) = unresolved_checks.as_ref() {
+        truncate(
+            &format_reply_with_failed_checks(&outcome.last_message, summary, auto_turns_completed),
+            config.policy.max_output_chars,
+        )
+    } else if outcome.last_message.trim().is_empty() {
+        "承認後の応答本文を取得できませんでした。ローカルのログを確認してください。".to_owned()
+    } else {
+        truncate(&outcome.last_message, config.policy.max_output_chars)
+    };
+    Ok(reply)
+}
+
+fn handle_approval_command(
+    store: &Store,
+    config: &Config,
+    sender_id: i64,
+    request_id: &str,
+    approved: bool,
+) -> Result<String> {
+    let Some(request) = store.find_approval_request(request_id)? else {
+        return Ok(format!("承認要求 `{request_id}` は見つかりません。"));
+    };
+
+    let next_status = if approved {
+        ApprovalRequestStatus::Approved
+    } else {
+        ApprovalRequestStatus::Declined
+    };
+    let updated = store.resolve_approval_request(request_id, next_status, sender_id)?;
+    if !updated {
+        return Ok(format!(
+            "承認要求 `{request_id}` はすでに処理済みです。現在の状態: `{}`",
+            approval_status_name(request.status)
+        ));
+    }
+
+    if config.codex.transport == CodexTransport::Exec {
+        return Ok(format!(
+            "承認要求 `{request_id}` を {} として記録しました。`app_server` を有効にすると、そのまま継続へ返せます。",
+            if approved { "承認" } else { "非承認" }
+        ));
+    }
+
+    Ok(format!(
+        "承認要求 `{request_id}` を {} として受け付けました。継続処理へ返します。",
+        if approved { "承認" } else { "非承認" }
+    ))
 }
 
 fn handle_workspace_command(
@@ -487,6 +701,24 @@ fn format_runtime_failure_message() -> String {
         .to_owned()
 }
 
+fn format_approval_pending_message(request_count: usize) -> String {
+    if request_count <= 1 {
+        "承認待ちです。下の承認メッセージから続けてください。".to_owned()
+    } else {
+        format!(
+            "承認待ちです。{} 件の承認メッセージを送ったので、順番に処理してください。",
+            request_count
+        )
+    }
+}
+
+fn format_approval_resolution_message(request_id: &str, approved: bool) -> String {
+    format!(
+        "承認要求 `{request_id}` を {} として受け付けました。",
+        if approved { "承認" } else { "非承認" }
+    )
+}
+
 fn format_auto_continue_waiting_message(auto_turns_completed: usize) -> String {
     if auto_turns_completed == 0 {
         "この依頼は完了しました。次の入力を待ちます。".to_owned()
@@ -504,6 +736,8 @@ fn format_help_message() -> String {
         "/help",
         "/status",
         "/stop",
+        "/approve <request_id>",
+        "/deny <request_id>",
         "/workspace",
         "/workspace <id>",
         "/mode await_reply",
@@ -517,6 +751,7 @@ fn format_help_message() -> String {
 fn format_status_message(
     lane: Option<crate::store::LaneRecord>,
     default_max_turns_limit: i64,
+    pending_request_ids: Vec<String>,
 ) -> String {
     let Some(lane) = lane else {
         return "この会話にはまだレーンがありません。".to_owned();
@@ -532,13 +767,19 @@ fn format_status_message(
         Some(lane.extra_turn_budget),
         default_max_turns_limit,
     );
+    let latest_request_id = pending_request_ids
+        .last()
+        .map(String::as_str)
+        .unwrap_or("なし");
     format!(
-        "状態: `{}`\nworkspace: `{}`\nモード: `{}`\n{}\nセッション: {}",
+        "状態: `{}`\nworkspace: `{}`\nモード: `{}`\n{}\nセッション: {}\n未解決の承認要求: {}\n最新の承認要求: {}",
         lane_state_name(lane.state),
         lane.workspace_id,
         lane_mode_name(lane.mode),
         format_lane_mode_details(lane.mode, configured_budget),
-        session
+        session,
+        pending_request_ids.len(),
+        latest_request_id
     )
 }
 
@@ -563,6 +804,61 @@ fn format_workspace_message(
         lane_mode_name(mode),
         format_lane_mode_details(mode, configured_budget)
     )
+}
+
+async fn persist_approval_requests(
+    store: &Store,
+    telegram: &TelegramClient,
+    chat_id: i64,
+    lane_id: &str,
+    run_id: &str,
+    requests: &[crate::app_server::CodexApprovalRequest],
+) -> Result<()> {
+    for request in requests {
+        if store.find_approval_request(&request.request_id)?.is_some() {
+            continue;
+        }
+        store.insert_approval_request(crate::store::NewApprovalRequest {
+            request_id: request.request_id.clone(),
+            lane_id: lane_id.to_owned(),
+            run_id: run_id.to_owned(),
+            thread_id: request.thread_id.clone(),
+            turn_id: request.turn_id.clone(),
+            item_id: request.item_id.clone(),
+            request_kind: request.request_kind,
+            summary_text: request.summary_text.clone(),
+            raw_payload_json: request.raw_payload_json.clone(),
+        })?;
+
+        let notice = format!(
+            "{}\n\n要求 ID: `{}`",
+            request.summary_text, request.request_id
+        );
+        let buttons = vec![
+            crate::telegram::InlineKeyboardButton {
+                text: "承認".to_owned(),
+                callback_data: format!("approve:{}", request.request_id),
+            },
+            crate::telegram::InlineKeyboardButton {
+                text: "非承認".to_owned(),
+                callback_data: format!("deny:{}", request.request_id),
+            },
+        ];
+        let sent = telegram
+            .send_message_with_inline_keyboard(chat_id, &notice, &buttons)
+            .await?;
+        store.set_approval_request_message_id(&request.request_id, sent.message_id)?;
+        store.insert_message(
+            lane_id,
+            Some(run_id),
+            "outbound",
+            "telegram_approval_request",
+            Some(sent.message_id),
+            Some(&notice),
+            None,
+        )?;
+    }
+    Ok(())
 }
 
 fn resolve_workspace<'a>(
@@ -728,6 +1024,15 @@ fn configured_extra_turn_budget(
     }
 }
 
+fn approval_status_name(status: ApprovalRequestStatus) -> &'static str {
+    match status {
+        ApprovalRequestStatus::Pending => "pending",
+        ApprovalRequestStatus::Approved => "approved",
+        ApprovalRequestStatus::Declined => "declined",
+        ApprovalRequestStatus::TimedOut => "timed_out",
+    }
+}
+
 fn format_lane_mode_details(mode: LaneMode, extra_turn_budget: i64) -> String {
     match mode {
         LaneMode::MaxTurns => format!("追加ターン上限: {}", extra_turn_budget),
@@ -882,7 +1187,7 @@ mod tests {
     #[test]
     fn format_status_message_without_lane_is_clear() {
         assert_eq!(
-            format_status_message(None, 3),
+            format_status_message(None, 3, Vec::new()),
             "この会話にはまだレーンがありません。"
         );
     }
@@ -910,6 +1215,7 @@ mod tests {
         let reply = handle_control_command(
             &store,
             &config,
+            1,
             10,
             "dm",
             None,
@@ -938,6 +1244,7 @@ mod tests {
         let reply = handle_control_command(
             &store,
             &config,
+            1,
             10,
             "dm",
             None,
@@ -974,6 +1281,7 @@ mod tests {
         let reply = handle_control_command(
             &store,
             &config,
+            1,
             20,
             "dm",
             Some(&lane),
@@ -1001,6 +1309,7 @@ mod tests {
         let reply = handle_control_command(
             &store,
             &config,
+            1,
             10,
             "dm",
             None,
@@ -1034,6 +1343,7 @@ mod tests {
         let reply = handle_control_command(
             &store,
             &config,
+            1,
             20,
             "dm",
             Some(&lane),
@@ -1068,8 +1378,116 @@ mod tests {
             waiting_since_ms: Some(1),
         };
 
-        let message = format_status_message(Some(lane), 3);
+        let message = format_status_message(Some(lane), 3, Vec::new());
         assert!(message.contains("workspace: `docs`"));
+    }
+
+    #[test]
+    fn status_message_includes_pending_approval_summary() {
+        let lane = LaneRecord {
+            lane_id: "lane-1".to_owned(),
+            chat_id: 1,
+            thread_key: "dm".to_owned(),
+            workspace_id: "main".to_owned(),
+            mode: LaneMode::AwaitReply,
+            state: LaneState::NeedsLocalApproval,
+            codex_session_id: Some("session-1".to_owned()),
+            extra_turn_budget: 0,
+            waiting_since_ms: None,
+        };
+
+        let message =
+            format_status_message(Some(lane), 3, vec!["req-1".to_owned(), "req-2".to_owned()]);
+        assert!(message.contains("未解決の承認要求: 2"));
+        assert!(message.contains("最新の承認要求: req-2"));
+    }
+
+    #[test]
+    fn approve_command_resolves_pending_request() {
+        let dir = tempdir().expect("tempdir should be created");
+        let store = Store::open(dir.path().join("bridge.db")).expect("store should open");
+        let mut config = test_config();
+        config.codex.transport = crate::config::CodexTransport::AppServer;
+
+        store
+            .insert_approval_request(crate::store::NewApprovalRequest {
+                request_id: "req-1".to_owned(),
+                lane_id: "lane-1".to_owned(),
+                run_id: "run-1".to_owned(),
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-1".to_owned(),
+                item_id: "item-1".to_owned(),
+                request_kind: crate::store::ApprovalRequestKind::CommandExecution,
+                summary_text: "command".to_owned(),
+                raw_payload_json: "{}".to_owned(),
+            })
+            .expect("approval request should insert");
+
+        let reply = handle_control_command(
+            &store,
+            &config,
+            77,
+            10,
+            "dm",
+            None,
+            TelegramControlCommand::Approve {
+                request_id: "req-1".to_owned(),
+            },
+            3,
+        )
+        .expect("approve command should succeed");
+
+        let request = store
+            .find_approval_request("req-1")
+            .expect("approval request should load")
+            .expect("approval request should exist");
+        assert_eq!(
+            request.status,
+            crate::store::ApprovalRequestStatus::Approved
+        );
+        assert_eq!(request.resolved_by_sender_id, Some(77));
+        assert!(reply.contains("継続処理へ返します"));
+    }
+
+    #[test]
+    fn deny_command_reports_already_resolved_request() {
+        let dir = tempdir().expect("tempdir should be created");
+        let store = Store::open(dir.path().join("bridge.db")).expect("store should open");
+        let config = test_config();
+
+        store
+            .insert_approval_request(crate::store::NewApprovalRequest {
+                request_id: "req-1".to_owned(),
+                lane_id: "lane-1".to_owned(),
+                run_id: "run-1".to_owned(),
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-1".to_owned(),
+                item_id: "item-1".to_owned(),
+                request_kind: crate::store::ApprovalRequestKind::CommandExecution,
+                summary_text: "command".to_owned(),
+                raw_payload_json: "{}".to_owned(),
+            })
+            .expect("approval request should insert");
+        store
+            .resolve_approval_request("req-1", crate::store::ApprovalRequestStatus::Approved, 99)
+            .expect("approval request should resolve");
+
+        let reply = handle_control_command(
+            &store,
+            &config,
+            77,
+            10,
+            "dm",
+            None,
+            TelegramControlCommand::Deny {
+                request_id: "req-1".to_owned(),
+            },
+            3,
+        )
+        .expect("deny command should succeed");
+
+        assert!(reply.contains("すでに処理済み"));
+        assert!(reply.contains("approved"));
     }
 
     fn saved_attachment(
@@ -1128,6 +1546,7 @@ mod tests {
                 model: "gpt-5.4".to_owned(),
                 sandbox: "workspace-write".to_owned(),
                 approval: "on-request".to_owned(),
+                transport: crate::config::CodexTransport::Exec,
                 profile: None,
             },
             storage: crate::config::StorageConfig {
@@ -1172,9 +1591,13 @@ mod tests {
     fn should_continue_automatically_for_max_turns_until_limit() {
         let outcome = crate::codex::CodexOutcome {
             session_id: Some("session-1".to_owned()),
+            turn_id: None,
             last_message: "続けます".to_owned(),
             exit_code: Some(0),
             approval_pending: false,
+            approval_requests: Vec::new(),
+            approval_request_count: 0,
+            approval_resolved_count: 0,
         };
 
         assert!(should_continue_automatically(
@@ -1197,9 +1620,13 @@ mod tests {
     fn should_not_continue_automatically_after_non_zero_exit() {
         let outcome = crate::codex::CodexOutcome {
             session_id: Some("session-1".to_owned()),
+            turn_id: None,
             last_message: "失敗しました".to_owned(),
             exit_code: Some(1),
             approval_pending: false,
+            approval_requests: Vec::new(),
+            approval_request_count: 0,
+            approval_resolved_count: 0,
         };
 
         assert!(!should_continue_automatically(

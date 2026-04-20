@@ -79,6 +79,95 @@ pub struct RunRecord {
     pub lane_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalRequestKind {
+    CommandExecution,
+    FileChange,
+    Permissions,
+    ToolUserInput,
+}
+
+impl ApprovalRequestKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CommandExecution => "command_execution",
+            Self::FileChange => "file_change",
+            Self::Permissions => "permissions",
+            Self::ToolUserInput => "tool_user_input",
+        }
+    }
+
+    fn from_str(value: &str) -> std::result::Result<Self, String> {
+        match value {
+            "command_execution" => Ok(Self::CommandExecution),
+            "file_change" => Ok(Self::FileChange),
+            "permissions" => Ok(Self::Permissions),
+            "tool_user_input" => Ok(Self::ToolUserInput),
+            other => Err(format!("unknown approval request kind: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalRequestStatus {
+    Pending,
+    Approved,
+    Declined,
+    TimedOut,
+}
+
+impl ApprovalRequestStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Declined => "declined",
+            Self::TimedOut => "timed_out",
+        }
+    }
+
+    fn from_str(value: &str) -> std::result::Result<Self, String> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "approved" => Ok(Self::Approved),
+            "declined" => Ok(Self::Declined),
+            "timed_out" => Ok(Self::TimedOut),
+            other => Err(format!("unknown approval request status: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ApprovalRequestRecord {
+    pub request_id: String,
+    pub lane_id: String,
+    pub run_id: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub request_kind: ApprovalRequestKind,
+    pub summary_text: String,
+    pub raw_payload_json: String,
+    pub status: ApprovalRequestStatus,
+    pub requested_at_ms: i64,
+    pub resolved_at_ms: Option<i64>,
+    pub resolved_by_sender_id: Option<i64>,
+    pub telegram_message_id: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewApprovalRequest {
+    pub request_id: String,
+    pub lane_id: String,
+    pub run_id: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub request_kind: ApprovalRequestKind,
+    pub summary_text: String,
+    pub raw_payload_json: String,
+}
+
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open(path).context("failed to open sqlite database")?;
@@ -148,9 +237,43 @@ impl Store {
             );
 
             INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms)
-            VALUES (1, unixepoch('subsec') * 1000);
+                VALUES (1, unixepoch('subsec') * 1000);
         "#;
         self.with_conn(|conn| conn.execute_batch(sql))?;
+        self.with_conn(|conn| {
+            ensure_column_exists(
+                conn,
+                "runs",
+                "approval_request_count",
+                "ALTER TABLE runs ADD COLUMN approval_request_count INTEGER NOT NULL DEFAULT 0",
+            )?;
+            ensure_column_exists(
+                conn,
+                "runs",
+                "approval_resolved_count",
+                "ALTER TABLE runs ADD COLUMN approval_resolved_count INTEGER NOT NULL DEFAULT 0",
+            )?;
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS approval_requests (
+                    request_id TEXT PRIMARY KEY,
+                    lane_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    turn_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    request_kind TEXT NOT NULL,
+                    summary_text TEXT NOT NULL,
+                    raw_payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    requested_at_ms INTEGER NOT NULL,
+                    resolved_at_ms INTEGER,
+                    resolved_by_sender_id INTEGER,
+                    telegram_message_id INTEGER
+                );
+                "#,
+            )
+        })?;
         Ok(())
     }
 
@@ -400,6 +523,8 @@ impl Store {
         exit_code: Option<i32>,
         completion_reason: &str,
         approval_pending: bool,
+        approval_request_count: i64,
+        approval_resolved_count: i64,
     ) -> Result<()> {
         let now = Utc::now().timestamp_millis();
         self.with_conn(|conn| {
@@ -409,7 +534,9 @@ impl Store {
                 SET ended_at_ms = ?2,
                     exit_code = ?3,
                     completion_reason = ?4,
-                    approval_pending = ?5
+                    approval_pending = ?5,
+                    approval_request_count = ?6,
+                    approval_resolved_count = ?7
                 WHERE run_id = ?1
                 "#,
                 params![
@@ -417,11 +544,184 @@ impl Store {
                     now,
                     exit_code,
                     completion_reason,
-                    approval_pending as i32
+                    approval_pending as i32,
+                    approval_request_count,
+                    approval_resolved_count,
                 ],
             )
         })?;
         Ok(())
+    }
+
+    pub fn insert_approval_request(&self, request: NewApprovalRequest) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
+        self.with_conn(|conn| {
+            conn.execute(
+                r#"
+                INSERT INTO approval_requests(
+                    request_id, lane_id, run_id, thread_id, turn_id, item_id,
+                    request_kind, summary_text, raw_payload_json, status, requested_at_ms
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', ?10)
+                ON CONFLICT(request_id) DO NOTHING
+                "#,
+                params![
+                    request.request_id,
+                    request.lane_id,
+                    request.run_id,
+                    request.thread_id,
+                    request.turn_id,
+                    request.item_id,
+                    request.request_kind.as_str(),
+                    request.summary_text,
+                    request.raw_payload_json,
+                    now,
+                ],
+            )
+        })?;
+        Ok(())
+    }
+
+    pub fn find_approval_request(&self, request_id: &str) -> Result<Option<ApprovalRequestRecord>> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                r#"
+                SELECT request_id, lane_id, run_id, thread_id, turn_id, item_id,
+                       request_kind, summary_text, raw_payload_json, status,
+                       requested_at_ms, resolved_at_ms, resolved_by_sender_id, telegram_message_id
+                FROM approval_requests
+                WHERE request_id = ?1
+                "#,
+                params![request_id],
+                |row| {
+                    Ok(ApprovalRequestRecord {
+                        request_id: row.get(0)?,
+                        lane_id: row.get(1)?,
+                        run_id: row.get(2)?,
+                        thread_id: row.get(3)?,
+                        turn_id: row.get(4)?,
+                        item_id: row.get(5)?,
+                        request_kind: ApprovalRequestKind::from_str(&row.get::<_, String>(6)?)
+                            .map_err(|err| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    6,
+                                    Type::Text,
+                                    Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        err,
+                                    )),
+                                )
+                            })?,
+                        summary_text: row.get(7)?,
+                        raw_payload_json: row.get(8)?,
+                        status: ApprovalRequestStatus::from_str(&row.get::<_, String>(9)?)
+                            .map_err(|err| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    9,
+                                    Type::Text,
+                                    Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        err,
+                                    )),
+                                )
+                            })?,
+                        requested_at_ms: row.get(10)?,
+                        resolved_at_ms: row.get(11)?,
+                        resolved_by_sender_id: row.get(12)?,
+                        telegram_message_id: row.get(13)?,
+                    })
+                },
+            )
+            .optional()
+        })
+    }
+
+    pub fn resolve_approval_request(
+        &self,
+        request_id: &str,
+        status: ApprovalRequestStatus,
+        resolved_by_sender_id: i64,
+    ) -> Result<bool> {
+        let now = Utc::now().timestamp_millis();
+        let updated = self.with_conn(|conn| {
+            conn.execute(
+                r#"
+                UPDATE approval_requests
+                SET status = ?2,
+                    resolved_at_ms = ?3,
+                    resolved_by_sender_id = ?4
+                WHERE request_id = ?1 AND status = 'pending'
+                "#,
+                params![request_id, status.as_str(), now, resolved_by_sender_id],
+            )
+        })?;
+        Ok(updated > 0)
+    }
+
+    pub fn set_approval_request_message_id(
+        &self,
+        request_id: &str,
+        telegram_message_id: i64,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE approval_requests SET telegram_message_id = ?2 WHERE request_id = ?1",
+                params![request_id, telegram_message_id],
+            )
+        })?;
+        Ok(())
+    }
+
+    pub fn list_pending_approval_requests_for_lane(
+        &self,
+        lane_id: &str,
+    ) -> Result<Vec<ApprovalRequestRecord>> {
+        self.with_conn(|conn| {
+            let mut statement = conn.prepare(
+                r#"
+                SELECT request_id, lane_id, run_id, thread_id, turn_id, item_id,
+                       request_kind, summary_text, raw_payload_json, status,
+                       requested_at_ms, resolved_at_ms, resolved_by_sender_id, telegram_message_id
+                FROM approval_requests
+                WHERE lane_id = ?1 AND status = 'pending'
+                ORDER BY requested_at_ms ASC
+                "#,
+            )?;
+            let rows = statement.query_map(params![lane_id], |row| {
+                Ok(ApprovalRequestRecord {
+                    request_id: row.get(0)?,
+                    lane_id: row.get(1)?,
+                    run_id: row.get(2)?,
+                    thread_id: row.get(3)?,
+                    turn_id: row.get(4)?,
+                    item_id: row.get(5)?,
+                    request_kind: ApprovalRequestKind::from_str(&row.get::<_, String>(6)?)
+                        .map_err(|err| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                6,
+                                Type::Text,
+                                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
+                            )
+                        })?,
+                    summary_text: row.get(7)?,
+                    raw_payload_json: row.get(8)?,
+                    status: ApprovalRequestStatus::from_str(&row.get::<_, String>(9)?).map_err(
+                        |err| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                9,
+                                Type::Text,
+                                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
+                            )
+                        },
+                    )?,
+                    requested_at_ms: row.get(10)?,
+                    resolved_at_ms: row.get(11)?,
+                    resolved_by_sender_id: row.get(12)?,
+                    telegram_message_id: row.get(13)?,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })
     }
 
     pub fn insert_message(
@@ -466,6 +766,24 @@ impl Store {
             .map_err(|_| anyhow!("sqlite mutex poisoned"))?;
         f(&guard).context("sqlite operation failed")
     }
+}
+
+fn ensure_column_exists(
+    conn: &Connection,
+    table_name: &str,
+    column_name: &str,
+    alter_sql: &str,
+) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .any(|existing| existing == column_name);
+    if !exists {
+        conn.execute_batch(alter_sql)?;
+    }
+    Ok(())
 }
 
 fn mode_to_str(mode: LaneMode) -> &'static str {
@@ -607,5 +925,106 @@ mod tests {
         assert_eq!(lane.state, LaneState::Idle);
         assert_eq!(lane.codex_session_id, None);
         assert_eq!(lane.waiting_since_ms, None);
+    }
+
+    #[test]
+    fn update_lane_state_to_needs_local_approval_keeps_session_and_clears_waiting() {
+        let (_dir, store) = temp_store();
+        let lane = store
+            .get_or_create_lane(42, "555", "main", LaneMode::AwaitReply, 0)
+            .expect("lane");
+        store
+            .update_lane_state(&lane.lane_id, LaneState::WaitingReply, Some("session-1"))
+            .expect("state update");
+
+        store
+            .update_lane_state(
+                &lane.lane_id,
+                LaneState::NeedsLocalApproval,
+                Some("session-1"),
+            )
+            .expect("approval state update");
+
+        let lane = store
+            .find_lane(42, "555")
+            .expect("query")
+            .expect("lane exists");
+        assert_eq!(lane.state, LaneState::NeedsLocalApproval);
+        assert_eq!(lane.codex_session_id.as_deref(), Some("session-1"));
+        assert_eq!(lane.waiting_since_ms, None);
+    }
+
+    #[test]
+    fn finish_run_persists_approval_counts() {
+        let (_dir, store) = temp_store();
+        let run = store
+            .insert_run(NewRun {
+                lane_id: "lane-1".to_owned(),
+                run_kind: "start".to_owned(),
+            })
+            .expect("run");
+
+        store
+            .finish_run(&run.run_id, None, "needs_local_approval", true, 2, 1)
+            .expect("finish run");
+
+        let (approval_pending, request_count, resolved_count): (i64, i64, i64) = store
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT approval_pending, approval_request_count, approval_resolved_count FROM runs WHERE run_id = ?1",
+                    params![&run.run_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+            })
+            .expect("read run");
+        assert_eq!(approval_pending, 1);
+        assert_eq!(request_count, 2);
+        assert_eq!(resolved_count, 1);
+    }
+
+    #[test]
+    fn approval_request_round_trip_supports_resolve_and_message_tracking() {
+        let (_dir, store) = temp_store();
+        store
+            .insert_approval_request(NewApprovalRequest {
+                request_id: "req-1".to_owned(),
+                lane_id: "lane-1".to_owned(),
+                run_id: "run-1".to_owned(),
+                thread_id: "thread-1".to_owned(),
+                turn_id: "turn-1".to_owned(),
+                item_id: "item-1".to_owned(),
+                request_kind: ApprovalRequestKind::CommandExecution,
+                summary_text: "command approval".to_owned(),
+                raw_payload_json: "{\"kind\":\"command\"}".to_owned(),
+            })
+            .expect("insert approval request");
+
+        let pending = store
+            .list_pending_approval_requests_for_lane("lane-1")
+            .expect("pending approvals");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].status, ApprovalRequestStatus::Pending);
+
+        store
+            .set_approval_request_message_id("req-1", 55)
+            .expect("set message id");
+        let updated = store
+            .resolve_approval_request("req-1", ApprovalRequestStatus::Approved, 99)
+            .expect("resolve approval request");
+        assert!(updated);
+
+        let request = store
+            .find_approval_request("req-1")
+            .expect("find approval request")
+            .expect("request exists");
+        assert_eq!(request.status, ApprovalRequestStatus::Approved);
+        assert_eq!(request.telegram_message_id, Some(55));
+        assert_eq!(request.resolved_by_sender_id, Some(99));
+        assert!(request.resolved_at_ms.is_some());
+
+        let second_update = store
+            .resolve_approval_request("req-1", ApprovalRequestStatus::Declined, 99)
+            .expect("second resolve");
+        assert!(!second_update);
     }
 }

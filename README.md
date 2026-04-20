@@ -13,6 +13,7 @@ Send a message on Telegram, let your Windows PC run `codex`, and get the reply b
 - Connects a Telegram bot to a local Codex workflow
 - Keeps conversation state in SQLite so the bridge can resume work cleanly
 - Supports reply-driven work and automatic continuation modes
+- Sends approval requests back to Telegram when Codex needs confirmation
 - Stores bot tokens in local protected storage with DPAPI
 - Can run in the foreground or as a Windows service
 
@@ -97,12 +98,29 @@ Inside Telegram, you can use:
 /help
 /status                  # show the current bridge state
 /stop                    # stop the active Codex session
+/approve <request_id>    # approve a pending request from chat text
+/deny <request_id>       # deny a pending request from chat text
 /workspace               # show the current workspace and available IDs
 /workspace docs          # switch this chat to another workspace
 /mode completion_checks  # continue only after local checks fail
 /mode infinite           # keep continuing until Codex stops naturally
 /mode max_turns 3        # continue automatically up to 3 times
 ```
+
+When `codex.transport = "app_server"`, the bridge also sends inline approval buttons for pending requests. You can approve or deny them directly in Telegram without switching back to the Windows PC.
+
+## Approval Flow
+
+Use `codex.transport = "app_server"` when you want Telegram-driven approvals.
+
+The flow is:
+
+1. Send a request that makes Codex ask for approval.
+2. Wait for the bridge to post an approval message in Telegram.
+3. Press `承認` or `非承認`, or use `/approve <request_id>` and `/deny <request_id>`.
+4. The same Codex turn continues on the Windows machine.
+
+If you prefer the older CLI-only path, keep `codex.transport = "exec"`.
 
 ## Configuration
 
@@ -112,7 +130,7 @@ The main config file is `bridge.toml`.
 
 - `service`: run mode and shutdown timing
 - `telegram`: allowed chat types and allowed senders
-- `codex`: CLI binary, model, sandbox mode, approval mode, and optional profile
+- `codex`: CLI binary, model, sandbox mode, approval mode, transport, and optional profile
 - `storage`: SQLite path, state directory, temp directory, and logs
 - `policy`: default lane mode and output limits
 - `checks`: optional post-run verification commands
@@ -138,6 +156,7 @@ binary = "codex"
 model = "<your-codex-model>"
 sandbox = "workspace-write"
 approval = "on-request"
+transport = "exec"
 
 [storage]
 db_path = "state/bridge.db"
@@ -216,6 +235,7 @@ Optional environment variables:
 - `LIVE_CODEX_BIN`
 - `LIVE_CODEX_PROFILE`
 - `LIVE_TIMEOUT_SEC`
+- `LIVE_APPROVAL_MODE`
 
 Run:
 
@@ -224,6 +244,13 @@ cargo test --features live-e2e --test live_end_to_end -- --ignored --nocapture
 ```
 
 Use a dedicated test bot and chat when possible.
+
+For approval testing with `app_server` transport:
+
+```powershell
+$env:LIVE_APPROVAL_MODE = "app_server"
+cargo test --features live-e2e --test live_approval_end_to_end -- --ignored --nocapture
+```
 
 ## Repository Layout
 

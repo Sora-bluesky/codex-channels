@@ -23,6 +23,8 @@ pub struct IncomingMessage {
     pub attachments: Vec<TelegramAttachment>,
     pub telegram_message_id: i64,
     pub thread_key: String,
+    pub callback_query_id: Option<String>,
+    pub control_command_override: Option<TelegramControlCommand>,
     pub payload_json: String,
 }
 
@@ -31,6 +33,12 @@ pub enum TelegramControlCommand {
     Help,
     Status,
     Stop,
+    Approve {
+        request_id: String,
+    },
+    Deny {
+        request_id: String,
+    },
     Workspace {
         workspace_id: Option<String>,
     },
@@ -42,7 +50,9 @@ pub enum TelegramControlCommand {
 
 impl IncomingMessage {
     pub fn control_command(&self) -> Option<TelegramControlCommand> {
-        parse_control_command(&self.text)
+        self.control_command_override
+            .clone()
+            .or_else(|| parse_control_command(&self.text))
     }
 }
 
@@ -97,6 +107,7 @@ struct Update {
     update_id: i64,
     message: Option<Message>,
     edited_message: Option<Message>,
+    callback_query: Option<CallbackQuery>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -121,6 +132,14 @@ struct Chat {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct User {
     id: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct CallbackQuery {
+    id: String,
+    from: User,
+    data: Option<String>,
+    message: Option<Message>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -166,7 +185,7 @@ impl TelegramClient {
         let body = serde_json::json!({
             "offset": offset,
             "timeout": timeout_sec,
-            "allowed_updates": ["message", "edited_message"],
+            "allowed_updates": ["message", "edited_message", "callback_query"],
         });
 
         let response: ApiResponse<Vec<Update>> = self
@@ -186,11 +205,44 @@ impl TelegramClient {
     }
 
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<SendMessageResult> {
+        self.send_message_with_markup(chat_id, text, None).await
+    }
+
+    pub async fn send_message_with_inline_keyboard(
+        &self,
+        chat_id: i64,
+        text: &str,
+        buttons: &[InlineKeyboardButton],
+    ) -> Result<SendMessageResult> {
+        let keyboard = serde_json::json!({
+            "inline_keyboard": [
+                buttons
+                    .iter()
+                    .map(|button| serde_json::json!({
+                        "text": button.text,
+                        "callback_data": button.callback_data,
+                    }))
+                    .collect::<Vec<_>>()
+            ]
+        });
+        self.send_message_with_markup(chat_id, text, Some(keyboard))
+            .await
+    }
+
+    async fn send_message_with_markup(
+        &self,
+        chat_id: i64,
+        text: &str,
+        reply_markup: Option<Value>,
+    ) -> Result<SendMessageResult> {
         let url = format!("https://api.telegram.org/bot{}/sendMessage", self.token);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "chat_id": chat_id,
             "text": text,
         });
+        if let Some(reply_markup) = reply_markup {
+            body["reply_markup"] = reply_markup;
+        }
         let response: ApiResponse<Value> = self
             .http
             .post(url)
@@ -210,6 +262,32 @@ impl TelegramClient {
             .as_i64()
             .context("telegram sendMessage response missing message_id")?;
         Ok(SendMessageResult { message_id })
+    }
+
+    pub async fn answer_callback_query(
+        &self,
+        callback_query_id: &str,
+        text: Option<&str>,
+    ) -> Result<()> {
+        let url = format!(
+            "https://api.telegram.org/bot{}/answerCallbackQuery",
+            self.token
+        );
+        let mut body = serde_json::json!({
+            "callback_query_id": callback_query_id,
+        });
+        if let Some(text) = text {
+            body["text"] = Value::String(text.to_owned());
+        }
+        self.http
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .context("telegram answerCallbackQuery request failed")?
+            .error_for_status()
+            .context("telegram answerCallbackQuery returned error status")?;
+        Ok(())
     }
 
     pub async fn edit_message(&self, chat_id: i64, message_id: i64, text: &str) -> Result<()> {
@@ -363,6 +441,12 @@ pub struct SendMessageResult {
     pub message_id: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineKeyboardButton {
+    pub text: String,
+    pub callback_data: String,
+}
+
 #[derive(Debug)]
 struct DownloadedTelegramAttachment {
     remote_file: TelegramRemoteFile,
@@ -384,6 +468,10 @@ fn parse_updates(response: ApiResponse<Vec<Update>>) -> Result<Vec<IncomingMessa
 }
 
 fn normalize_update(update: Update) -> Result<Option<IncomingMessage>> {
+    if let Some(callback_query) = update.callback_query {
+        return normalize_callback_query(update.update_id, callback_query);
+    }
+
     let message = match update.message.or(update.edited_message) {
         Some(message) => message,
         None => return Ok(None),
@@ -411,6 +499,43 @@ fn normalize_update(update: Update) -> Result<Option<IncomingMessage>> {
         attachments,
         telegram_message_id: message.message_id,
         thread_key,
+        callback_query_id: None,
+        control_command_override: None,
+        payload_json,
+    }))
+}
+
+fn normalize_callback_query(
+    update_id: i64,
+    callback_query: CallbackQuery,
+) -> Result<Option<IncomingMessage>> {
+    let Some(message) = callback_query.message.as_ref() else {
+        return Ok(None);
+    };
+    let text = callback_query.data.clone().unwrap_or_default();
+    let control_command_override = parse_callback_command(&text);
+    if text.trim().is_empty() && control_command_override.is_none() {
+        return Ok(None);
+    }
+
+    let payload_json =
+        serde_json::to_string(&callback_query).context("failed to serialize callback query")?;
+    let thread_key = message
+        .message_thread_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "dm".to_owned());
+
+    Ok(Some(IncomingMessage {
+        update_id,
+        chat_id: message.chat.id,
+        chat_type: message.chat.kind.clone(),
+        sender_id: Some(callback_query.from.id),
+        text,
+        attachments: Vec::new(),
+        telegram_message_id: message.message_id,
+        thread_key,
+        callback_query_id: Some(callback_query.id),
+        control_command_override,
         payload_json,
     }))
 }
@@ -511,6 +636,20 @@ pub fn parse_control_command(text: &str) -> Option<TelegramControlCommand> {
             .is_none()
             .then_some(TelegramControlCommand::Stop);
     }
+    if command.eq_ignore_ascii_case("approve") {
+        let request_id = parts.next()?.trim().to_owned();
+        if request_id.is_empty() || parts.next().is_some() {
+            return None;
+        }
+        return Some(TelegramControlCommand::Approve { request_id });
+    }
+    if command.eq_ignore_ascii_case("deny") {
+        let request_id = parts.next()?.trim().to_owned();
+        if request_id.is_empty() || parts.next().is_some() {
+            return None;
+        }
+        return Some(TelegramControlCommand::Deny { request_id });
+    }
     if command.eq_ignore_ascii_case("workspace") {
         let workspace_id = parts.next().map(|value| value.trim().to_owned());
         if parts.next().is_some() {
@@ -542,6 +681,25 @@ pub fn parse_control_command(text: &str) -> Option<TelegramControlCommand> {
     }
 
     None
+}
+
+fn parse_callback_command(text: &str) -> Option<TelegramControlCommand> {
+    parse_control_command(text).or_else(|| {
+        let (command, request_id) = text.split_once(':')?;
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return None;
+        }
+        match command.trim().to_ascii_lowercase().as_str() {
+            "approve" => Some(TelegramControlCommand::Approve {
+                request_id: request_id.to_owned(),
+            }),
+            "deny" => Some(TelegramControlCommand::Deny {
+                request_id: request_id.to_owned(),
+            }),
+            _ => None,
+        }
+    })
 }
 
 fn parse_control_command_name(token: &str) -> Option<&str> {
@@ -1058,6 +1216,60 @@ mod tests {
     }
 
     #[test]
+    fn parses_approve_command() {
+        assert_eq!(
+            parse_control_command("/approve req-1"),
+            Some(TelegramControlCommand::Approve {
+                request_id: "req-1".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_deny_command() {
+        assert_eq!(
+            parse_control_command("/deny req-2"),
+            Some(TelegramControlCommand::Deny {
+                request_id: "req-2".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_callback_query_as_control_command() {
+        let messages = parse_updates_response(
+            r#"{
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 303,
+                        "callback_query": {
+                            "id": "callback-1",
+                            "from": { "id": 12 },
+                            "data": "approve:req-9",
+                            "message": {
+                                "message_id": 44,
+                                "chat": { "id": 42, "type": "private" }
+                            }
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .expect("callback update should parse");
+
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.callback_query_id.as_deref(), Some("callback-1"));
+        assert_eq!(
+            message.control_command(),
+            Some(TelegramControlCommand::Approve {
+                request_id: "req-9".to_owned(),
+            })
+        );
+    }
+
+    #[test]
     fn reads_control_command_from_incoming_message_text() {
         let message = IncomingMessage {
             update_id: 1,
@@ -1068,6 +1280,8 @@ mod tests {
             attachments: Vec::new(),
             telegram_message_id: 30,
             thread_key: "dm".to_owned(),
+            callback_query_id: None,
+            control_command_override: None,
             payload_json: "{}".to_owned(),
         };
 
@@ -1082,6 +1296,8 @@ mod tests {
         assert_eq!(parse_control_command("/help now"), None);
         assert_eq!(parse_control_command("/status now"), None);
         assert_eq!(parse_control_command("/stop now"), None);
+        assert_eq!(parse_control_command("/approve req extra"), None);
+        assert_eq!(parse_control_command("/deny req extra"), None);
         assert_eq!(parse_control_command("/workspace docs extra"), None);
     }
 

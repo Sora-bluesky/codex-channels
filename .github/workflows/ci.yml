@@ -37,5 +37,8 @@ jobs:
       - name: Public surface audit
         run: pwsh -NoProfile -File scripts/audit-public-surface.ps1
 
+      - name: Documentation terminology audit
+        run: pwsh -NoProfile -File scripts/audit-doc-terminology.ps1
+
       - name: Secret surface audit
         run: pwsh -NoProfile -File scripts/audit-secret-surface.ps1

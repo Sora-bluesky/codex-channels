@@ -1,20 +1,28 @@
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::config::{CodexConfig, WorkspaceConfig};
+use crate::app_server::{AppServerClient, CodexApprovalRequest};
+use crate::config::{CodexConfig, CodexTransport, WorkspaceConfig};
+use crate::store::ApprovalRequestRecord;
 
 #[derive(Debug, Clone)]
 pub struct CodexOutcome {
     pub session_id: Option<String>,
+    pub turn_id: Option<String>,
     pub last_message: String,
     pub exit_code: Option<i32>,
     pub approval_pending: bool,
+    pub approval_requests: Vec<CodexApprovalRequest>,
+    pub approval_request_count: i64,
+    pub approval_resolved_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -72,11 +80,15 @@ impl From<String> for CodexRequest {
 #[derive(Clone)]
 pub struct CodexRunner {
     config: CodexConfig,
+    app_server: Arc<Mutex<Option<AppServerClient>>>,
 }
 
 impl CodexRunner {
     pub fn new(config: CodexConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            app_server: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub async fn start(
@@ -84,9 +96,21 @@ impl CodexRunner {
         workspace: &WorkspaceConfig,
         request: impl Into<CodexRequest>,
     ) -> Result<CodexOutcome> {
-        let mut args = self.base_args(workspace);
-        args.extend(request.into().into_args());
-        self.run_command(args, &workspace.path).await
+        match self.config.transport {
+            CodexTransport::Exec => {
+                let mut args = self.base_args(workspace);
+                args.extend(request.into().into_args());
+                self.run_command(args, &workspace.path).await
+            }
+            CodexTransport::AppServer => {
+                let mut client = self.ensure_app_server().await?;
+                client
+                    .as_mut()
+                    .expect("app-server should exist")
+                    .start_turn(&self.config, workspace, request.into())
+                    .await
+            }
+        }
     }
 
     pub async fn resume(
@@ -95,14 +119,39 @@ impl CodexRunner {
         session_id: &str,
         request: impl Into<CodexRequest>,
     ) -> Result<CodexOutcome> {
-        let mut args = vec![
-            "exec".to_owned(),
-            "resume".to_owned(),
-            session_id.to_owned(),
-        ];
-        args.extend(request.into().into_args());
-        args.push("--json".to_owned());
-        self.run_command(args, &workspace.path).await
+        match self.config.transport {
+            CodexTransport::Exec => {
+                let mut args = vec![
+                    "exec".to_owned(),
+                    "resume".to_owned(),
+                    session_id.to_owned(),
+                ];
+                args.extend(request.into().into_args());
+                args.push("--json".to_owned());
+                self.run_command(args, &workspace.path).await
+            }
+            CodexTransport::AppServer => {
+                let mut client = self.ensure_app_server().await?;
+                client
+                    .as_mut()
+                    .expect("app-server should exist")
+                    .resume_turn(&self.config, workspace, session_id, request.into())
+                    .await
+            }
+        }
+    }
+
+    pub async fn resolve_approval(
+        &self,
+        request: &ApprovalRequestRecord,
+        approved: bool,
+    ) -> Result<CodexOutcome> {
+        let mut client = self.ensure_app_server().await?;
+        client
+            .as_mut()
+            .expect("app-server should exist")
+            .resolve_approval(request, approved)
+            .await
     }
 
     fn base_args(&self, workspace: &WorkspaceConfig) -> Vec<String> {
@@ -202,10 +251,24 @@ impl CodexRunner {
 
         Ok(CodexOutcome {
             session_id,
+            turn_id: None,
             last_message,
             exit_code: status.code(),
             approval_pending,
+            approval_requests: Vec::new(),
+            approval_request_count: 0,
+            approval_resolved_count: 0,
         })
+    }
+
+    async fn ensure_app_server(
+        &self,
+    ) -> Result<tokio::sync::MutexGuard<'_, Option<AppServerClient>>> {
+        let mut guard = self.app_server.lock().await;
+        if guard.is_none() {
+            *guard = Some(AppServerClient::spawn(&self.config).await?);
+        }
+        Ok(guard)
     }
 }
 
@@ -214,7 +277,7 @@ mod tests {
     use super::{CodexRequest, CodexRunner};
     use std::path::PathBuf;
 
-    use crate::config::{CodexConfig, LaneMode, WorkspaceConfig};
+    use crate::config::{CodexConfig, CodexTransport, LaneMode, WorkspaceConfig};
 
     #[test]
     fn request_without_images_keeps_prompt_only() {
@@ -253,6 +316,7 @@ mod tests {
             model: "gpt-5.4".to_owned(),
             sandbox: "read-only".to_owned(),
             approval: "never".to_owned(),
+            transport: CodexTransport::Exec,
             profile: None,
         });
 
@@ -268,6 +332,7 @@ mod tests {
             model: "gpt-5.4".to_owned(),
             sandbox: "read-only".to_owned(),
             approval: "never".to_owned(),
+            transport: CodexTransport::Exec,
             profile: Some("work".to_owned()),
         });
 
