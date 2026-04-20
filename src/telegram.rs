@@ -291,12 +291,41 @@ impl TelegramClient {
     }
 
     pub async fn edit_message(&self, chat_id: i64, message_id: i64, text: &str) -> Result<()> {
+        self.edit_message_with_markup(chat_id, message_id, text, None)
+            .await
+    }
+
+    pub async fn edit_message_clearing_inline_keyboard(
+        &self,
+        chat_id: i64,
+        message_id: i64,
+        text: &str,
+    ) -> Result<()> {
+        self.edit_message_with_markup(
+            chat_id,
+            message_id,
+            text,
+            Some(serde_json::json!({ "inline_keyboard": [] })),
+        )
+        .await
+    }
+
+    async fn edit_message_with_markup(
+        &self,
+        chat_id: i64,
+        message_id: i64,
+        text: &str,
+        reply_markup: Option<Value>,
+    ) -> Result<()> {
         let url = format!("https://api.telegram.org/bot{}/editMessageText", self.token);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "chat_id": chat_id,
             "message_id": message_id,
             "text": text,
         });
+        if let Some(reply_markup) = reply_markup {
+            body["reply_markup"] = reply_markup;
+        }
         self.http
             .post(url)
             .json(&body)

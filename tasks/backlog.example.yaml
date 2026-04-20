@@ -72,39 +72,130 @@
 
 # === v0.1.9: Approval notification ===
 - id: TASK-010
-    title: Send Telegram approval requests for pending Codex actions
-    status: active
+    title: Store app-server approval requests and summaries
+    status: done
+    priority: P0
+    target_version: v0.1.9
+    repo: codex-channels
+
+- id: TASK-011
+    title: Send Telegram approval notices with request IDs
+    status: done
+    priority: P0
+    target_version: v0.1.9
+    repo: codex-channels
+
+- id: TASK-012
+    title: Reflect pending approvals in lane state and status output
+    status: done
     priority: P0
     target_version: v0.1.9
     repo: codex-channels
 
 # === v0.1.10: Approval actions ===
-- id: TASK-011
-    title: Add Telegram approve and deny actions
-    status: backlog
+- id: TASK-013
+    title: Parse Telegram callback queries for approval actions
+    status: done
+    priority: P0
+    target_version: v0.1.10
+    repo: codex-channels
+
+- id: TASK-014
+    title: Add Telegram approve and deny fallback commands
+    status: done
+    priority: P0
+    target_version: v0.1.10
+    repo: codex-channels
+
+- id: TASK-015
+    title: Ignore duplicate approval actions safely
+    status: done
+    priority: P0
+    target_version: v0.1.10
+    repo: codex-channels
+
+- id: TASK-016
+    title: Reject unauthorized approval actions
+    status: done
     priority: P0
     target_version: v0.1.10
     repo: codex-channels
 
 # === v0.1.11: Approval resume ===
-- id: TASK-012
-    title: Persist approval decisions and resume Codex safely
-    status: backlog
+- id: TASK-017
+    title: Persist approval decisions with atomic state transitions
+    status: done
+    priority: P0
+    target_version: v0.1.11
+    repo: codex-channels
+
+- id: TASK-018
+    title: Resume app-server turns after approval decisions
+    status: done
+    priority: P0
+    target_version: v0.1.11
+    repo: codex-channels
+
+- id: TASK-019
+    title: Recover unresolved approval requests after restart
+    status: active
     priority: P0
     target_version: v0.1.11
     repo: codex-channels
 
 # === v0.1.12: Approval hardening ===
-- id: TASK-013
-    title: Harden Telegram approval UX and edge cases
+- id: TASK-020
+    title: Tailor approval summaries for command and file actions
+    status: done
+    priority: P1
+    target_version: v0.1.12
+    repo: codex-channels
+
+- id: TASK-021
+    title: Expire timed out approvals and clear stale buttons
+    status: done
+    priority: P1
+    target_version: v0.1.12
+    repo: codex-channels
+
+- id: TASK-022
+    title: Preserve approval history when notification delivery partly fails
+    status: active
+    priority: P1
+    target_version: v0.1.12
+    repo: codex-channels
+
+- id: TASK-023
+    title: Improve approval callback wording for each decision result
+    status: backlog
+    priority: P1
+    target_version: v0.1.12
+    repo: codex-channels
+
+- id: TASK-024
+    title: Add direct async tests for approval decision paths
     status: backlog
     priority: P1
     target_version: v0.1.12
     repo: codex-channels
 
 # === v0.1.13: Approval E2E ===
-- id: TASK-014
-    title: Run live end-to-end approval flow on Telegram and Codex
+- id: TASK-025
+    title: Add live approval accept end-to-end coverage
+    status: done
+    priority: P1
+    target_version: v0.1.13
+    repo: codex-channels
+
+- id: TASK-026
+    title: Add live approval decline end-to-end coverage
+    status: done
+    priority: P1
+    target_version: v0.1.13
+    repo: codex-channels
+
+- id: TASK-027
+    title: Run live approval end-to-end flow on Telegram and Codex
     status: backlog
     priority: P1
     target_version: v0.1.13

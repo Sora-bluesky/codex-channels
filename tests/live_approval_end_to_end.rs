@@ -172,11 +172,11 @@ fn required_env(name: &str) -> Result<String> {
 }
 
 fn unique_nonce(prefix: &str) -> String {
-    format!(
-        "{}_{}",
-        prefix,
-        Instant::now().elapsed().as_nanos() + (std::process::id() as u128)
-    )
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_nanos();
+    format!("{}_{}_{}", prefix, std::process::id(), nanos)
 }
 
 fn write_live_config(root: &Path, live: &LiveApprovalEnv) -> Result<PathBuf> {

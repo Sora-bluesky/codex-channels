@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tracing::warn;
+use uuid::Uuid;
 
 use crate::codex::{CodexOutcome, CodexRequest};
 use crate::config::{CodexConfig, WorkspaceConfig};
@@ -14,6 +15,7 @@ use crate::store::{ApprovalRequestKind, ApprovalRequestRecord};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexApprovalRequest {
     pub request_id: String,
+    pub transport_request_id: String,
     pub thread_id: String,
     pub turn_id: String,
     pub item_id: String,
@@ -35,7 +37,7 @@ impl AppServerClient {
     pub async fn spawn(config: &CodexConfig) -> Result<Self> {
         let mut command = Command::new(&config.binary);
         command
-            .arg("app-server")
+            .args(app_server_spawn_args(config))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -118,7 +120,7 @@ impl AppServerClient {
     ) -> Result<CodexOutcome> {
         let response = approval_response(request, approved)?;
         self.send_json(&json!({
-            "id": request.request_id,
+            "id": request.transport_request_id,
             "response": response,
             "result": response,
         }))
@@ -157,21 +159,7 @@ impl AppServerClient {
         if self.initialized {
             return Ok(());
         }
-        self.call(
-            "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "codex-channels",
-                    "title": "codex-channels",
-                    "version": env!("CARGO_PKG_VERSION"),
-                },
-                "capabilities": {
-                    "experimentalApi": false,
-                    "optOutNotificationMethods": [],
-                }
-            }),
-        )
-        .await?;
+        self.call("initialize", initialize_params()).await?;
         self.send_json(&json!({ "method": "initialized" })).await?;
         self.initialized = true;
         Ok(())
@@ -376,39 +364,89 @@ async fn log_app_server_stderr(stderr: ChildStderr) {
 }
 
 fn sandbox_policy_for_workspace(config: &CodexConfig, workspace: &WorkspaceConfig) -> Value {
+    let readable_roots = workspace_readable_roots(workspace);
     match config.sandbox.as_str() {
         "danger-full-access" => json!({ "type": "dangerFullAccess" }),
         "read-only" => json!({
             "type": "readOnly",
-            "access": { "type": "cwdAndChildren" },
+            "access": {
+                "type": "restricted",
+                "readableRoots": readable_roots,
+            },
             "networkAccess": true,
         }),
         "workspace-write" => json!({
             "type": "workspaceWrite",
+            "readOnlyAccess": {
+                "type": "restricted",
+                "readableRoots": readable_roots,
+            },
             "writableRoots": workspace
                 .writable_roots
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
-            "readOnlyAccess": { "type": "cwdAndChildren" },
-            "networkAccess": "enabled",
+            "networkAccess": true,
             "excludeTmpdirEnvVar": false,
             "excludeSlashTmp": false,
         }),
         other => json!({
             "type": "workspaceWrite",
+            "readOnlyAccess": {
+                "type": "restricted",
+                "readableRoots": readable_roots,
+            },
             "writableRoots": workspace
                 .writable_roots
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
-            "readOnlyAccess": { "type": "cwdAndChildren" },
-            "networkAccess": "enabled",
+            "networkAccess": true,
             "excludeTmpdirEnvVar": false,
             "excludeSlashTmp": false,
             "fallbackSandbox": other,
         }),
     }
+}
+
+fn initialize_params() -> Value {
+    json!({
+        "clientInfo": {
+            "name": "codex-channels",
+            "title": "codex-channels",
+            "version": env!("CARGO_PKG_VERSION"),
+        },
+        "capabilities": {
+            "experimentalApi": true,
+            "optOutNotificationMethods": [],
+        }
+    })
+}
+
+fn workspace_readable_roots(workspace: &WorkspaceConfig) -> Vec<String> {
+    let mut roots = vec![workspace.path.display().to_string()];
+    for path in &workspace.writable_roots {
+        let rendered = path.display().to_string();
+        if !roots.contains(&rendered) {
+            roots.push(rendered);
+        }
+    }
+    roots
+}
+
+fn app_server_spawn_args(config: &CodexConfig) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(profile) = config
+        .profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+    {
+        args.push("--profile".to_owned());
+        args.push(profile.to_owned());
+    }
+    args.push("app-server".to_owned());
+    args
 }
 
 fn request_to_user_inputs(request: CodexRequest) -> Vec<Value> {
@@ -454,7 +492,7 @@ fn response_id(message: &Value) -> Option<String> {
 }
 
 fn parse_approval_request(message: &Value) -> Result<Option<CodexApprovalRequest>> {
-    let request_id = match response_id(message) {
+    let transport_request_id = match response_id(message) {
         Some(request_id) => request_id,
         None => return Ok(None),
     };
@@ -487,11 +525,15 @@ fn parse_approval_request(message: &Value) -> Result<Option<CodexApprovalRequest
         _ => return Ok(None),
     };
 
+    let thread_id = required_param_str(&params, "threadId")?.to_owned();
+    let turn_id = required_param_str(&params, "turnId")?.to_owned();
+    let item_id = required_param_str(&params, "itemId")?.to_owned();
     Ok(Some(CodexApprovalRequest {
-        request_id,
-        thread_id: required_param_str(&params, "threadId")?.to_owned(),
-        turn_id: required_param_str(&params, "turnId")?.to_owned(),
-        item_id: required_param_str(&params, "itemId")?.to_owned(),
+        request_id: stable_approval_request_id(&thread_id, &turn_id, &item_id, request_kind),
+        transport_request_id,
+        thread_id,
+        turn_id,
+        item_id,
         request_kind,
         summary_text,
         raw_payload_json: serde_json::to_string(&params)
@@ -587,6 +629,31 @@ fn required_param_str<'a>(params: &'a Value, key: &str) -> Result<&'a str> {
         .ok_or_else(|| anyhow!("approval params missing `{key}`"))
 }
 
+fn stable_approval_request_id(
+    thread_id: &str,
+    turn_id: &str,
+    item_id: &str,
+    request_kind: ApprovalRequestKind,
+) -> String {
+    let seed = format!(
+        "{thread_id}\x1f{turn_id}\x1f{item_id}\x1f{}",
+        approval_request_kind_key(request_kind)
+    );
+    format!(
+        "approval-{}",
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, seed.as_bytes())
+    )
+}
+
+fn approval_request_kind_key(request_kind: ApprovalRequestKind) -> &'static str {
+    match request_kind {
+        ApprovalRequestKind::CommandExecution => "command_execution",
+        ApprovalRequestKind::FileChange => "file_change",
+        ApprovalRequestKind::Permissions => "permissions",
+        ApprovalRequestKind::ToolUserInput => "tool_user_input",
+    }
+}
+
 fn turn_status_exit_code(status: &str) -> i32 {
     match status {
         "completed" => 0,
@@ -598,7 +665,9 @@ fn turn_status_exit_code(status: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{CodexConfig, CodexTransport, LaneMode, WorkspaceConfig};
     use crate::store::ApprovalRequestKind;
+    use std::path::PathBuf;
 
     #[test]
     fn parses_command_approval_request() {
@@ -617,6 +686,25 @@ mod tests {
         .expect("approval should exist");
 
         assert_eq!(request.request_kind, ApprovalRequestKind::CommandExecution);
+        assert_eq!(
+            request.request_id,
+            stable_approval_request_id(
+                "thread-1",
+                "turn-1",
+                "item-1",
+                ApprovalRequestKind::CommandExecution,
+            )
+        );
+        assert_eq!(request.transport_request_id, "req-1");
+        let callback_target = format!(
+            "{}:1",
+            request
+                .request_id
+                .strip_prefix("approval-")
+                .unwrap_or(&request.request_id)
+        );
+        assert!(format!("approve:{callback_target}").len() <= 64);
+        assert!(format!("deny:{callback_target}").len() <= 64);
         assert!(request.summary_text.contains("npm test"));
         assert!(request.summary_text.contains("C:/workspace"));
     }
@@ -641,6 +729,16 @@ mod tests {
         .expect("approval should exist");
 
         assert_eq!(request.request_kind, ApprovalRequestKind::Permissions);
+        assert_eq!(
+            request.request_id,
+            stable_approval_request_id(
+                "thread-1",
+                "turn-1",
+                "item-1",
+                ApprovalRequestKind::Permissions,
+            )
+        );
+        assert_eq!(request.transport_request_id, "req-2");
         assert!(request.summary_text.contains("network access required"));
     }
 
@@ -648,11 +746,13 @@ mod tests {
     fn builds_decline_response_for_command_execution() {
         let request = ApprovalRequestRecord {
             request_id: "req-1".to_owned(),
+            transport_request_id: "transport-req-1".to_owned(),
             lane_id: "lane-1".to_owned(),
             run_id: "run-1".to_owned(),
             thread_id: "thread-1".to_owned(),
             turn_id: "turn-1".to_owned(),
             item_id: "item-1".to_owned(),
+            transport: crate::store::ApprovalRequestTransport::AppServer,
             request_kind: ApprovalRequestKind::CommandExecution,
             summary_text: "command".to_owned(),
             raw_payload_json: "{}".to_owned(),
@@ -671,11 +771,13 @@ mod tests {
     fn builds_accept_response_for_permissions_request() {
         let request = ApprovalRequestRecord {
             request_id: "req-2".to_owned(),
+            transport_request_id: "transport-req-2".to_owned(),
             lane_id: "lane-1".to_owned(),
             run_id: "run-1".to_owned(),
             thread_id: "thread-1".to_owned(),
             turn_id: "turn-1".to_owned(),
             item_id: "item-1".to_owned(),
+            transport: crate::store::ApprovalRequestTransport::AppServer,
             request_kind: ApprovalRequestKind::Permissions,
             summary_text: "permissions".to_owned(),
             raw_payload_json: json!({
@@ -703,5 +805,113 @@ mod tests {
                 "scope": "turn",
             })
         );
+    }
+
+    #[test]
+    fn stable_request_id_differs_by_approval_kind() {
+        let command = stable_approval_request_id(
+            "thread-1",
+            "turn-1",
+            "item-1",
+            ApprovalRequestKind::CommandExecution,
+        );
+        let permissions = stable_approval_request_id(
+            "thread-1",
+            "turn-1",
+            "item-1",
+            ApprovalRequestKind::Permissions,
+        );
+
+        assert_ne!(command, permissions);
+    }
+
+    #[test]
+    fn app_server_spawn_args_include_profile_when_present() {
+        let args = app_server_spawn_args(&CodexConfig {
+            binary: "codex".to_owned(),
+            model: "gpt-5.4".to_owned(),
+            sandbox: "workspace-write".to_owned(),
+            approval: "on-request".to_owned(),
+            transport: CodexTransport::AppServer,
+            profile: Some("work".to_owned()),
+        });
+
+        assert_eq!(
+            args,
+            vec![
+                "--profile".to_owned(),
+                "work".to_owned(),
+                "app-server".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn workspace_write_sandbox_policy_enables_network_access() {
+        let policy = sandbox_policy_for_workspace(
+            &CodexConfig {
+                binary: "codex".to_owned(),
+                model: "gpt-5.4".to_owned(),
+                sandbox: "workspace-write".to_owned(),
+                approval: "on-request".to_owned(),
+                transport: CodexTransport::AppServer,
+                profile: None,
+            },
+            &WorkspaceConfig {
+                id: "main".to_owned(),
+                path: PathBuf::from("C:/workspace"),
+                writable_roots: vec![PathBuf::from("C:/workspace")],
+                default_mode: LaneMode::AwaitReply,
+                continue_prompt: "continue".to_owned(),
+                checks_profile: "default".to_owned(),
+            },
+        );
+
+        assert_eq!(policy["type"], Value::String("workspaceWrite".to_owned()));
+        assert_eq!(policy["networkAccess"], Value::Bool(true));
+        assert_eq!(
+            policy["readOnlyAccess"]["type"],
+            Value::String("restricted".to_owned())
+        );
+        assert_eq!(
+            policy["readOnlyAccess"]["readableRoots"],
+            json!(["C:/workspace"])
+        );
+    }
+
+    #[test]
+    fn read_only_sandbox_policy_enables_network_access() {
+        let policy = sandbox_policy_for_workspace(
+            &CodexConfig {
+                binary: "codex".to_owned(),
+                model: "gpt-5.4".to_owned(),
+                sandbox: "read-only".to_owned(),
+                approval: "on-request".to_owned(),
+                transport: CodexTransport::AppServer,
+                profile: None,
+            },
+            &WorkspaceConfig {
+                id: "main".to_owned(),
+                path: PathBuf::from("C:/workspace"),
+                writable_roots: vec![PathBuf::from("C:/workspace")],
+                default_mode: LaneMode::AwaitReply,
+                continue_prompt: "continue".to_owned(),
+                checks_profile: "default".to_owned(),
+            },
+        );
+
+        assert_eq!(policy["type"], Value::String("readOnly".to_owned()));
+        assert_eq!(policy["networkAccess"], Value::Bool(true));
+        assert_eq!(
+            policy["access"]["type"],
+            Value::String("restricted".to_owned())
+        );
+        assert_eq!(policy["access"]["readableRoots"], json!(["C:/workspace"]));
+    }
+
+    #[test]
+    fn initialize_params_enable_experimental_api() {
+        let params = initialize_params();
+        assert_eq!(params["capabilities"]["experimentalApi"], Value::Bool(true));
     }
 }
