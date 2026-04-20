@@ -11,6 +11,8 @@
 /handoff.md
 
 # Live planning files stay outside the repository.
-/tasks/backlog.yaml
-/tasks/roadmap-title-ja.psd1
+/tasks/
+!/tasks/
+/tasks/*
+!/tasks/README.md
 /docs/project/ROADMAP.md

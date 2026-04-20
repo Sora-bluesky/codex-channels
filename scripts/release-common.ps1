@@ -304,3 +304,28 @@ function Update-ReleaseBacklogStatus {
 
     return @($updatedIds.ToArray())
 }
+
+function Assert-ReleasePlanningInputsExist {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BacklogPath,
+        [string]$RoadmapTitleJaPath = ''
+    )
+
+    $missing = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $BacklogPath)) {
+        $missing.Add("backlog.yaml not found: $BacklogPath") | Out-Null
+    }
+
+    if ($missing.Count -gt 0) {
+        throw ($missing -join "`n")
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RoadmapTitleJaPath) -and (Test-Path -LiteralPath $RoadmapTitleJaPath)) {
+        try {
+            $null = Import-PowerShellDataFile -LiteralPath $RoadmapTitleJaPath
+        } catch {
+            throw "roadmap-title-ja.psd1 is invalid: $RoadmapTitleJaPath`n$($_.Exception.Message)"
+        }
+    }
+}

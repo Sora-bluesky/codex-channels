@@ -29,9 +29,6 @@ $failures = New-Object System.Collections.Generic.List[string]
 
 $requiredTracked = @(
     'tasks/README.md',
-    'tasks/backlog.example.yaml',
-    'tasks/roadmap-title-ja.example.psd1',
-    'tasks/ROADMAP.example.md',
     'scripts/audit-doc-terminology.ps1',
     'scripts/audit-secret-surface.ps1',
     'scripts/planning-paths.ps1',
@@ -55,6 +52,41 @@ foreach ($path in $requiredTracked) {
 foreach ($path in $forbiddenTracked) {
     if (Test-Tracked -TrackedFiles $trackedFiles -Path $path) {
         $failures.Add("forbidden tracked file: $path") | Out-Null
+    }
+}
+
+$trackedTaskFiles = @($trackedFiles | Where-Object { $_ -like 'tasks/*' })
+foreach ($path in $trackedTaskFiles) {
+    if ($path -ne 'tasks/README.md') {
+        $failures.Add("unexpected tracked task file: $path") | Out-Null
+    }
+}
+
+$forbiddenPresent = @(
+    'tasks/backlog.yaml',
+    'tasks/roadmap-title-ja.psd1',
+    'tasks/ROADMAP.md',
+    'docs/project/ROADMAP.md'
+)
+
+foreach ($path in $forbiddenPresent) {
+    if (Test-Path -LiteralPath $path) {
+        $failures.Add("forbidden live file present in repo: $path") | Out-Null
+    }
+}
+
+$forbiddenLiveNames = @('backlog.yaml', 'roadmap-title-ja.psd1', 'ROADMAP.md')
+$forbiddenPresentAnywhere = Get-ChildItem -LiteralPath (Get-Location).Path -Recurse -File -Force |
+    Where-Object {
+        $_.FullName -notmatch '[\\/]\.git([\\/]|$)' -and
+        $_.FullName -notmatch '[\\/]target([\\/]|$)' -and
+        ($forbiddenLiveNames -contains $_.Name)
+    }
+
+foreach ($item in $forbiddenPresentAnywhere) {
+    $relativePath = [System.IO.Path]::GetRelativePath((Get-Location).Path, $item.FullName)
+    if ($relativePath -notin $forbiddenPresent) {
+        $failures.Add("forbidden live file present in repo: $relativePath") | Out-Null
     }
 }
 

@@ -11,6 +11,51 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
+function Test-CodexChannelsPathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$CandidatePath
+    )
+
+    $resolvedRoot = [System.IO.Path]::GetFullPath($RootPath)
+    $resolvedCandidate = [System.IO.Path]::GetFullPath($CandidatePath)
+    $rootWithSeparator = if ($resolvedRoot.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $resolvedRoot
+    } else {
+        $resolvedRoot + [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    return $resolvedCandidate.Equals($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $resolvedCandidate.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function New-CodexChannelsBootstrapBacklog {
+    return @"
+# === v0.1.0: Bootstrap ===
+- id: TASK-001
+    title: Describe the first internal milestone
+    status: backlog
+    priority: P0
+    target_version: v0.1.0
+    repo: codex-channels
+"@
+}
+
+function New-CodexChannelsBootstrapTitleMap {
+    return @"
+@{
+    VersionTitles = @{
+        "v0.1.0" = "初期計画"
+    }
+    TaskTitles = @{
+        "TASK-001" = "最初の内部マイルストーンを定義する"
+    }
+}
+"@
+}
+
 if ([string]::IsNullOrWhiteSpace($PlanningRoot)) {
     $PlanningRoot = Get-CodexChannelsPlanningRoot
 }
@@ -22,6 +67,10 @@ if ([string]::IsNullOrWhiteSpace($MarkerPath)) {
 $resolvedPlanningRoot = if ([System.IO.Path]::IsPathRooted($PlanningRoot)) { $PlanningRoot } else { Join-Path (Get-Location).Path $PlanningRoot }
 $resolvedMarkerPath = if ([System.IO.Path]::IsPathRooted($MarkerPath)) { $MarkerPath } else { Join-Path (Get-Location).Path $MarkerPath }
 
+if (Test-CodexChannelsPathInsideRoot -RootPath $repoRoot -CandidatePath $resolvedPlanningRoot) {
+    throw "Planning root must stay outside the repository: $resolvedPlanningRoot"
+}
+
 New-Item -ItemType Directory -Force -Path $resolvedPlanningRoot | Out-Null
 
 $backlogTarget = Join-Path $resolvedPlanningRoot 'backlog.yaml'
@@ -29,14 +78,14 @@ $titleTarget = Join-Path $resolvedPlanningRoot 'roadmap-title-ja.psd1'
 $backlogAlreadyExists = Test-Path -LiteralPath $backlogTarget
 
 if (-not $backlogAlreadyExists) {
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'tasks/backlog.example.yaml') -Destination $backlogTarget
+    [System.IO.File]::WriteAllText($backlogTarget, (New-CodexChannelsBootstrapBacklog), $utf8NoBom)
 }
 
 if (-not (Test-Path -LiteralPath $titleTarget)) {
     if ($backlogAlreadyExists) {
         [System.IO.File]::WriteAllText($titleTarget, "@{`n    VersionTitles = @{} `n    TaskTitles = @{} `n}`n", $utf8NoBom)
     } else {
-        Copy-Item -LiteralPath (Join-Path $repoRoot 'tasks/roadmap-title-ja.example.psd1') -Destination $titleTarget
+        [System.IO.File]::WriteAllText($titleTarget, (New-CodexChannelsBootstrapTitleMap), $utf8NoBom)
     }
 }
 

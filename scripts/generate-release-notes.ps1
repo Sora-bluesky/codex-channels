@@ -19,7 +19,7 @@ if ([string]::IsNullOrWhiteSpace($HistoryPath)) {
     $HistoryPath = Resolve-CodexChannelsScriptPath -RepoRoot $resolvedRepoRoot -RelativePath 'scripts/release-history.psd1'
 }
 if ([string]::IsNullOrWhiteSpace($BacklogPath)) {
-    $BacklogPath = Resolve-CodexChannelsPlanningFilePath -RepoRoot $resolvedRepoRoot -LocalRelativePath 'tasks/backlog.example.yaml' -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
+    $BacklogPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
 }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = 'release/release-body.md'

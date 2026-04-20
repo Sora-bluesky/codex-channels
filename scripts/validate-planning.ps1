@@ -76,20 +76,13 @@ function Get-TaskValues {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$localBacklogPath = Join-Path $repoRoot 'tasks/backlog.example.yaml'
-$localTitlePath = Join-Path $repoRoot 'tasks/roadmap-title-ja.example.psd1'
 $planningRoot = Get-CodexChannelsPlanningRoot
 $externalBacklogPath = Join-Path $planningRoot 'backlog.yaml'
 $externalTitlePath = Join-Path $planningRoot 'roadmap-title-ja.psd1'
 
 if ([string]::IsNullOrWhiteSpace($BacklogPath) -and [string]::IsNullOrWhiteSpace($RoadmapTitleJaPath)) {
-    if ((Test-Path -LiteralPath $externalBacklogPath) -or (Test-Path -LiteralPath $externalTitlePath)) {
-        $BacklogPath = $externalBacklogPath
-        $RoadmapTitleJaPath = $externalTitlePath
-    } else {
-        $BacklogPath = $localBacklogPath
-        $RoadmapTitleJaPath = $localTitlePath
-    }
+    $BacklogPath = $externalBacklogPath
+    $RoadmapTitleJaPath = $externalTitlePath
 } elseif ([string]::IsNullOrWhiteSpace($BacklogPath)) {
     $resolvedRoadmapTitleJaPath = Resolve-WorkspacePath -Path $RoadmapTitleJaPath
     $BacklogPath = Join-Path (Split-Path -Parent $resolvedRoadmapTitleJaPath) 'backlog.yaml'
@@ -156,9 +149,7 @@ if (-not (Test-Path -LiteralPath $resolvedBacklogPath)) {
     }
 }
 
-if (-not (Test-Path -LiteralPath $resolvedRoadmapTitleJaPath)) {
-    $failures.Add("roadmap-title-ja.psd1 not found: $resolvedRoadmapTitleJaPath") | Out-Null
-} else {
+if (Test-Path -LiteralPath $resolvedRoadmapTitleJaPath) {
     try {
         $data = Import-PowerShellDataFile -LiteralPath $resolvedRoadmapTitleJaPath
     } catch {
@@ -189,6 +180,11 @@ if (-not (Test-Path -LiteralPath $resolvedRoadmapTitleJaPath)) {
                 }
             }
         }
+    }
+} else {
+    $data = @{
+        VersionTitles = @{}
+        TaskTitles = @{}
     }
 }
 

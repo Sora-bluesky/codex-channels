@@ -118,6 +118,16 @@ fn sync_roadmap_generates_grouped_japanese_view() -> Result<()> {
     );
 
     let roadmap = fs::read_to_string(&roadmap_path)?;
+    let expected = fs::read_to_string(
+        repo_root()
+            .join("tests")
+            .join("fixtures")
+            .join("roadmap_snapshot.md"),
+    )?;
+    assert_eq!(
+        normalize_roadmap_timestamp(&roadmap),
+        normalize_roadmap_timestamp(&expected)
+    );
     assert!(roadmap.contains("# ロードマップ"));
     assert!(roadmap.contains("### v0.1.0: 基盤の立ち上げ"));
     assert!(roadmap.contains("### v0.1.1: サービス運用の追加"));
@@ -148,7 +158,7 @@ fn planning_paths_prefers_env_override() -> Result<()> {
     fs::write(&expected, "# existing external roadmap\n")?;
 
     let script = format!(
-        ". '{}' ; Resolve-CodexChannelsPlanningFilePath -RepoRoot '{}' -LocalRelativePath 'tasks/ROADMAP.example.md' -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'",
+        ". '{}' ; Resolve-CodexChannelsPlanningFilePath -RepoRoot '{}' -LocalRelativePath 'tasks/ROADMAP.md' -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'",
         repo_root()
             .join("scripts")
             .join("planning-paths.ps1")
@@ -267,7 +277,7 @@ fn setup_planning_creates_live_files_and_marker() -> Result<()> {
 
     let roadmap = fs::read_to_string(planning_root.join("ROADMAP.md"))?;
     assert!(roadmap.contains("# ロードマップ"));
-    assert!(roadmap.contains("ブリッジ基盤を作成"));
+    assert!(roadmap.contains("最初の内部マイルストーンを定義する"));
 
     Ok(())
 }
@@ -349,6 +359,69 @@ fn setup_planning_does_not_update_marker_when_sync_fails() -> Result<()> {
 }
 
 #[test]
+fn setup_planning_rejects_repo_internal_planning_root() -> Result<()> {
+    let temp = TempDir::new()?;
+    let marker_path = temp.path().join("planning-root.txt");
+    let repo_internal_root = repo_root().join("private-planning");
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(repo_root().join("scripts").join("setup-planning.ps1"))
+        .arg("-PlanningRoot")
+        .arg(&repo_internal_root)
+        .arg("-MarkerPath")
+        .arg(&marker_path)
+        .output()
+        .context("failed to run setup-planning.ps1 with repo-internal root")?;
+
+    assert!(
+        !output.status.success(),
+        "setup-planning unexpectedly accepted repo-internal root"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Planning root must stay outside the repository"),
+        "stderr did not mention repo boundary: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!marker_path.exists());
+
+    Ok(())
+}
+
+#[test]
+fn sync_roadmap_fails_when_backlog_is_missing() -> Result<()> {
+    let temp = TempDir::new()?;
+    let planning_root = temp.path().join("planning-root");
+    fs::create_dir_all(&planning_root)?;
+    write_file(
+        &planning_root.join("roadmap-title-ja.psd1"),
+        "@{\n    VersionTitles = @{}\n    TaskTitles = @{}\n}\n",
+    )?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(repo_root().join("scripts").join("sync-roadmap.ps1"))
+        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .output()
+        .context("failed to run sync-roadmap.ps1 without backlog")?;
+
+    assert!(
+        !output.status.success(),
+        "sync-roadmap unexpectedly succeeded without backlog"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Backlog not found"),
+        "stderr did not mention missing backlog: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn validate_planning_accepts_well_formed_inputs() -> Result<()> {
     let temp = TempDir::new()?;
     let backlog_path = temp.path().join("backlog.yaml");
@@ -374,16 +447,35 @@ fn validate_planning_accepts_well_formed_inputs() -> Result<()> {
 }
 
 #[test]
-fn validate_example_planning_files_pass() -> Result<()> {
-    let backlog_path = repo_root().join("tasks").join("backlog.example.yaml");
-    let title_path = repo_root()
-        .join("tasks")
-        .join("roadmap-title-ja.example.psd1");
+fn bootstrap_planning_generated_by_setup_is_valid() -> Result<()> {
+    let temp = TempDir::new()?;
+    let planning_root = temp.path().join("planning-root");
+    let marker_path = temp.path().join("planning-root.txt");
 
-    let output = run_validate_planning(&backlog_path, &title_path)?;
+    let setup = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(repo_root().join("scripts").join("setup-planning.ps1"))
+        .arg("-PlanningRoot")
+        .arg(&planning_root)
+        .arg("-MarkerPath")
+        .arg(&marker_path)
+        .output()
+        .context("failed to run setup-planning.ps1")?;
+
+    assert!(
+        setup.status.success(),
+        "setup-planning failed: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let output = run_validate_planning(
+        &planning_root.join("backlog.yaml"),
+        &planning_root.join("roadmap-title-ja.psd1"),
+    )?;
     assert!(
         output.status.success(),
-        "validate-planning failed for example files: {}",
+        "validate-planning failed for bootstrap files: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -391,37 +483,69 @@ fn validate_example_planning_files_pass() -> Result<()> {
 }
 
 #[test]
-fn roadmap_example_matches_generated_output() -> Result<()> {
+fn validate_planning_allows_missing_title_map() -> Result<()> {
     let temp = TempDir::new()?;
-    let roadmap_path = temp.path().join("ROADMAP.md");
-    let backlog_path = repo_root().join("tasks").join("backlog.example.yaml");
-    let title_path = repo_root()
-        .join("tasks")
-        .join("roadmap-title-ja.example.psd1");
-    let expected_path = repo_root().join("tasks").join("ROADMAP.example.md");
+    let backlog_path = temp.path().join("backlog.yaml");
+    let missing_title_path = temp.path().join("roadmap-title-ja.psd1");
+
+    write_file(
+        &backlog_path,
+        "# === v0.1.1: Bootstrap patch ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: codex-channels\n",
+    )?;
+
+    let output = run_validate_planning(&backlog_path, &missing_title_path)?;
+    assert!(
+        output.status.success(),
+        "validate-planning failed without title map: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn sync_roadmap_uses_explicit_env_overrides() -> Result<()> {
+    let temp = TempDir::new()?;
+    let planning_root = temp.path().join("planning-root");
+    let explicit_backlog_path = temp.path().join("custom-backlog.yaml");
+    let explicit_roadmap_path = temp.path().join("custom-ROADMAP.md");
+    let explicit_title_path = temp.path().join("custom-roadmap-title-ja.psd1");
+    fs::create_dir_all(&planning_root)?;
+
+    write_file(
+        &planning_root.join("backlog.yaml"),
+        "# === v0.1.0: Wrong ===\n- id: TASK-999\n    title: Wrong planning root\n    status: done\n    priority: P0\n    target_version: v0.1.0\n    repo: codex-channels\n",
+    )?;
+    write_file(
+        &explicit_backlog_path,
+        "# === v0.1.1: Override ===\n- id: TASK-001\n    title: Use explicit override\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: codex-channels\n",
+    )?;
+    write_file(
+        &explicit_title_path,
+        "@{\n    VersionTitles = @{ \"v0.1.1\" = \"上書き\" }\n    TaskTitles = @{ \"TASK-001\" = \"個別上書きを使う\" }\n}\n",
+    )?;
 
     let output = Command::new(powershell())
         .arg("-NoProfile")
         .arg("-File")
         .arg(repo_root().join("scripts").join("sync-roadmap.ps1"))
-        .arg("-BacklogPath")
-        .arg(&backlog_path)
-        .arg("-RoadmapPath")
-        .arg(&roadmap_path)
-        .arg("-RoadmapTitleJaPath")
-        .arg(&title_path)
+        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .env("CODEX_CHANNELS_BACKLOG_PATH", &explicit_backlog_path)
+        .env("CODEX_CHANNELS_ROADMAP_PATH", &explicit_roadmap_path)
+        .env("CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH", &explicit_title_path)
         .output()
-        .context("failed to run sync-roadmap.ps1 for example output")?;
+        .context("failed to run sync-roadmap.ps1 with env override")?;
 
     assert!(
         output.status.success(),
-        "sync-roadmap failed for example output: {}",
+        "sync-roadmap failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let generated = normalize_roadmap_timestamp(&fs::read_to_string(&roadmap_path)?);
-    let expected = normalize_roadmap_timestamp(&fs::read_to_string(&expected_path)?);
-    assert_eq!(generated, expected);
+    let roadmap = fs::read_to_string(&explicit_roadmap_path)?;
+    assert!(roadmap.contains("### v0.1.1: 上書き"));
+    assert!(roadmap.contains("個別上書きを使う"));
+    assert!(!roadmap.contains("Wrong planning root"));
 
     Ok(())
 }
