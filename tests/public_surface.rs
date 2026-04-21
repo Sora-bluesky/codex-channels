@@ -61,6 +61,7 @@ fn npm_package_keeps_binary_install_contract() -> Result<()> {
             .join("workflows")
             .join("release.yml"),
     )?;
+    let readme = std::fs::read_to_string(repo_root().join("README.md"))?;
 
     assert!(package.contains(r#""postinstall": "node npm/install.js""#));
     assert!(package.contains(r#""remotty": "bin/remotty.js""#));
@@ -73,6 +74,9 @@ fn npm_package_keeps_binary_install_contract() -> Result<()> {
     assert!(wrapper.contains("remotty.exe"));
     assert!(release_workflow.contains("actions/setup-node@v4"));
     assert!(release_workflow.contains("npm pack --pack-destination release"));
+    assert!(release_workflow.contains("cp release/remotty-*.tgz release/remotty.tgz"));
+    assert!(readme.contains("releases/latest/download/remotty.tgz"));
+    assert!(readme.contains("npm publish .\\release\\remotty.tgz"));
 
     Ok(())
 }

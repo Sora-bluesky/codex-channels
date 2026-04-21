@@ -81,6 +81,7 @@ jobs:
           cp remotty-windows-x64/remotty.exe release/remotty-x64.exe
           cp remotty-windows-arm64/remotty.exe release/remotty-arm64.exe
           npm pack --pack-destination release
+          cp release/remotty-*.tgz release/remotty.tgz
           cd release && sha256sum *.exe > SHA256SUMS
 
       - name: Generate release body

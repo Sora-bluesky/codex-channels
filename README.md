@@ -61,13 +61,21 @@ Rust is only required when you build from a source checkout instead of using the
 
 ### 1. Install `remotty`
 
+Install from the GitHub Release package:
+
 ```powershell
-npm install -g remotty
+npm install -g https://github.com/Sora-bluesky/remotty/releases/latest/download/remotty.tgz
 $remottyRoot = Join-Path (npm root -g) "remotty"
 Set-Location $remottyRoot
 ```
 
-The npm package installs the `remotty` command and downloads the matching Windows binary from the GitHub Release for that package version.
+The package installs the `remotty` command and downloads the matching Windows binary from the GitHub Release for that package version.
+
+After the package is published to the npm registry, the shorter command will be:
+
+```powershell
+npm install -g remotty
+```
 
 If you want to work from source instead:
 
@@ -310,6 +318,17 @@ node --check bin/remotty.js
 pwsh -NoProfile -File scripts/audit-public-surface.ps1
 pwsh -NoProfile -File scripts/audit-secret-surface.ps1
 ```
+
+### npm registry publish
+
+GitHub Releases include `remotty.tgz` and a versioned tarball such as `remotty-0.1.15.tgz`.
+Publishing to the npm registry is a separate maintainer step:
+
+```powershell
+npm publish .\release\remotty.tgz
+```
+
+Run this only from an npm account that owns the `remotty` package.
 
 ### Optional manual smoke
 
