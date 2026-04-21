@@ -183,5 +183,16 @@
                 "Published the quickstart release with both stable and versioned npm tarballs attached to GitHub Releases."
             )
         }
+        @{
+            Version = "0.1.19"
+            Commit = "213a8222ac049f067ffeaa913b0e8422fa45a9c3"
+            Title = "Local fakechat demo"
+            Notes = @(
+                "Added ``remotty demo fakechat`` for a localhost browser chat UI that calls the local Codex CLI without Telegram credentials."
+                "Added English and Japanese fakechat demo docs and linked them from both README files."
+                "Added the ``/remotty-fakechat-demo`` plugin command guide."
+                "Included ``docs/`` in the npm package so quickstart and demo links work after installation."
+            )
+        }
     )
 }
