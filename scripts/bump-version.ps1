@@ -14,6 +14,7 @@ $resolvedRepoRoot = Resolve-RemottyRepoRoot -RepoRoot $RepoRoot
 $versionFile = Join-Path $resolvedRepoRoot 'VERSION'
 $cargoTomlPath = Join-Path $resolvedRepoRoot 'Cargo.toml'
 $cargoLockPath = Join-Path $resolvedRepoRoot 'Cargo.lock'
+$packageJsonPath = Join-Path $resolvedRepoRoot 'package.json'
 $syncRoadmapScript = Join-Path $PSScriptRoot 'sync-roadmap.ps1'
 $generateNotesScript = Join-Path $PSScriptRoot 'generate-release-notes.ps1'
 $validatePlanningScript = Join-Path $PSScriptRoot 'validate-planning.ps1'
@@ -75,6 +76,7 @@ if (-not $SyncOnly) {
 [System.IO.File]::WriteAllText($versionFile, $normalizedVersion, [System.Text.UTF8Encoding]::new($false))
 Set-CargoPackageVersion -CargoTomlPath $cargoTomlPath -Version $normalizedVersion
 Set-CargoLockPackageVersion -CargoLockPath $cargoLockPath -PackageName 'remotty' -Version $normalizedVersion
+Set-NpmPackageVersion -PackageJsonPath $packageJsonPath -Version $normalizedVersion
 
 if ($SyncOnly) {
     Write-Output ("Synced version files to {0}" -f $normalizedVersion)
@@ -83,8 +85,8 @@ if ($SyncOnly) {
 
 Push-Location $resolvedRepoRoot
 try {
-    git add VERSION Cargo.toml Cargo.lock
-    Assert-NativeSuccess "git add VERSION Cargo.toml Cargo.lock"
+    git add VERSION Cargo.toml Cargo.lock package.json
+    Assert-NativeSuccess "git add VERSION Cargo.toml Cargo.lock package.json"
     git commit -m "chore: bump version to $normalizedVersion" | Out-Null
     Assert-NativeSuccess "git commit"
     git push -u origin $branch | Out-Null

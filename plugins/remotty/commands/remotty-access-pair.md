@@ -6,8 +6,11 @@ Authorize the Telegram sender that received a pairing code from the bot.
 
 1. Ask the user to send any message to the Telegram bot.
 2. Wait for the bot to reply with a `remotty pairing code`.
-3. Run `cargo run -- telegram access-pair <code> --config bridge.toml`.
+3. Run `remotty telegram access-pair <code> --config bridge.toml`.
 4. Confirm that the sender was added to the allowlist.
+
+If the `remotty` command is unavailable in a source checkout, fall back to
+`cargo run -- telegram access-pair <code> --config bridge.toml`.
 
 ## Output requirements
 

@@ -51,17 +51,30 @@ The Rust bridge still runs as the local core. The plugin is the user-facing laye
 
 - Windows 10 or Windows 11
 - Codex app, so you can install and run the local plugin commands
-- Rust toolchain from [rustup.rs](https://rustup.rs/) with `cargo` available on `PATH`
+- Node.js and `npm` for the packaged install path
 - `codex` CLI available on `PATH`
 - a Telegram bot token from `@BotFather`
 
+Rust is only required when you build from a source checkout instead of using the npm package.
+
 ## Quick Start
 
-### 1. Clone the repository
+### 1. Install `remotty`
+
+```powershell
+npm install -g remotty
+$remottyRoot = Join-Path (npm root -g) "remotty"
+Set-Location $remottyRoot
+```
+
+The npm package installs the `remotty` command and downloads the matching Windows binary from the GitHub Release for that package version.
+
+If you want to work from source instead:
 
 ```powershell
 git clone https://github.com/Sora-bluesky/remotty.git
 cd remotty
+cargo build
 ```
 
 ### 2. Create a Telegram bot
@@ -73,7 +86,7 @@ cd remotty
 
 ### 3. Install the local plugin
 
-Open this repository in Codex and install the local plugin entry named `remotty`.
+Open the `remotty` package or repository folder in Codex and install the local plugin entry named `remotty`.
 
 The repository already includes:
 
@@ -134,7 +147,8 @@ If you already use a named Codex profile, you can also set `codex.profile`. Othe
 /remotty-start
 ```
 
-If you prefer the CLI directly, `cargo run` still works as a compatibility path.
+If you prefer the CLI directly, `remotty --config bridge.toml` starts the foreground bridge.
+In a source checkout, `cargo run -- --config bridge.toml` still works as a compatibility path.
 
 ### 9. Open your bot in Telegram
 
@@ -248,18 +262,19 @@ Secret checks are intentionally layered:
 
 ## CLI Compatibility
 
-The standalone Rust CLI still works and remains the compatibility path while the plugin surface matures.
+The npm-installed `remotty` command is the packaged CLI path.
+The standalone Rust CLI still works from a source checkout.
 
 Common equivalents are:
 
-- plugin `/remotty-configure` -> `cargo run -- telegram configure --config bridge.toml`
-- plugin `/remotty-access-pair <code>` -> `cargo run -- telegram access-pair <code> --config bridge.toml`
-- plugin `/remotty-pair` -> `cargo run -- telegram pair --config bridge.toml`
-- plugin `/remotty-policy-allowlist` -> `cargo run -- telegram policy allowlist --config bridge.toml`
-- plugin `/remotty-status` -> `cargo run -- service status`
-- plugin `/remotty-live-env-check` -> `cargo run -- telegram live-env-check`
-- plugin `/remotty-smoke-approval-accept` -> `cargo run -- telegram smoke approval accept --config bridge.toml`
-- plugin `/remotty-smoke-approval-decline` -> `cargo run -- telegram smoke approval decline --config bridge.toml`
+- plugin `/remotty-configure` -> `remotty telegram configure --config bridge.toml`
+- plugin `/remotty-access-pair <code>` -> `remotty telegram access-pair <code> --config bridge.toml`
+- plugin `/remotty-pair` -> `remotty telegram pair --config bridge.toml`
+- plugin `/remotty-policy-allowlist` -> `remotty telegram policy allowlist --config bridge.toml`
+- plugin `/remotty-status` -> `remotty service status`
+- plugin `/remotty-live-env-check` -> `remotty telegram live-env-check`
+- plugin `/remotty-smoke-approval-accept` -> `remotty telegram smoke approval accept --config bridge.toml`
+- plugin `/remotty-smoke-approval-decline` -> `remotty telegram smoke approval decline --config bridge.toml`
 
 If you keep your config in a non-default path, pass the same `--config <path>` to the compatibility CLI commands.
 
@@ -270,16 +285,16 @@ If you want the bridge to keep running in the background:
 Open PowerShell as Administrator before the install step.
 
 ```powershell
-cargo run -- service install --config bridge.toml
-cargo run -- service start
-cargo run -- service status
+remotty service install --config bridge.toml
+remotty service start
+remotty service status
 ```
 
 To stop or remove it later:
 
 ```powershell
-cargo run -- service stop
-cargo run -- service uninstall
+remotty service stop
+remotty service uninstall
 ```
 
 ## For Contributors
@@ -290,6 +305,8 @@ cargo run -- service uninstall
 cargo fmt --check
 cargo test
 cargo check
+node --check npm/install.js
+node --check bin/remotty.js
 pwsh -NoProfile -File scripts/audit-public-surface.ps1
 pwsh -NoProfile -File scripts/audit-secret-surface.ps1
 ```
@@ -326,20 +343,20 @@ Optional environment variables:
 Check the environment first:
 
 ```powershell
-cargo run -- telegram live-env-check
+remotty telegram live-env-check
 ```
 
 Then run the approval-accept smoke:
 
 ```powershell
-cargo run -- telegram smoke approval accept --config bridge.toml
+remotty telegram smoke approval accept --config bridge.toml
 ```
 
 For the approval-decline smoke:
 
 ```powershell
 $env:LIVE_APPROVAL_MODE = "app_server"
-cargo run -- telegram smoke approval decline --config bridge.toml
+remotty telegram smoke approval decline --config bridge.toml
 ```
 
 Use a dedicated test bot and chat when possible.

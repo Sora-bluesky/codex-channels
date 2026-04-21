@@ -4,13 +4,16 @@ Run the manual approval-accept smoke against Telegram without printing any secre
 
 ## Workflow
 
-1. Work from the repo root.
+1. Work from the package or repo root that contains `bridge.toml`.
 2. Run `/remotty-live-env-check` first.
 3. Confirm the token is `set` or `stored`.
 4. Confirm `LIVE_TELEGRAM_CHAT_ID` and `LIVE_TELEGRAM_SENDER_ID` are `set` or `inferred`.
-5. Run `cargo run -- telegram smoke approval accept --config bridge.toml`.
+5. Run `remotty telegram smoke approval accept --config bridge.toml`.
 6. Follow the local terminal guidance and use Telegram to press `承認` when the pending request appears.
 7. Confirm that the smoke finished with a success message.
+
+If the `remotty` command is unavailable in a source checkout, fall back to
+`cargo run -- telegram smoke approval accept --config bridge.toml`.
 
 ## Output requirements
 

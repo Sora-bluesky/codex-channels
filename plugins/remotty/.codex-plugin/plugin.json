@@ -1,6 +1,6 @@
 {
   "name": "remotty",
-  "version": "0.1.8",
+  "version": "0.1.14",
   "description": "Plugin-first setup and operations for the remotty Windows local agent bridge.",
   "author": {
     "name": "Sora-bluesky",
