@@ -1,0 +1,20 @@
+{
+  "name": "remotty-local",
+  "interface": {
+    "displayName": "remotty local plugins"
+  },
+  "plugins": [
+    {
+      "name": "remotty",
+      "source": {
+        "source": "local",
+        "path": "./plugins/remotty"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

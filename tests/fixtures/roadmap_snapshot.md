@@ -17,19 +17,19 @@
 
 | | ID | Title | Priority | Repo | Status |
 |-|-----|-------|----------|------|--------|
-| [x] | TASK-001 | bridge foundation を作成 | P0 | codex-channels | done |
+| [x] | TASK-001 | bridge foundation を作成 | P0 | remotty | done |
 
 ### v0.1.1: サービス運用の追加
 
 | | ID | Title | Priority | Repo | Status |
 |-|-----|-------|----------|------|--------|
-| [-] | TASK-002 | Windows サービス管理コマンドを追加 | P1 | codex-channels | active |
+| [-] | TASK-002 | Windows サービス管理コマンドを追加 | P1 | remotty | active |
 
 ### v0.1.2: 確認フローの追加
 
 | | ID | Title | Priority | Repo | Status |
 |-|-----|-------|----------|------|--------|
-| [ ] | TASK-003 | completion checks follow-up flow を実装 | P0 | codex-channels | backlog |
+| [ ] | TASK-003 | completion checks follow-up flow を実装 | P0 | remotty | backlog |
 
 ## 凡例
 

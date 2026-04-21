@@ -79,7 +79,7 @@ impl AppServerClient {
                     "sandbox": config.sandbox,
                     "experimentalRawEvents": false,
                     "persistExtendedHistory": true,
-                    "serviceName": "codex-channels",
+                    "serviceName": "remotty",
                 }),
             )
             .await?;
@@ -412,8 +412,8 @@ fn sandbox_policy_for_workspace(config: &CodexConfig, workspace: &WorkspaceConfi
 fn initialize_params() -> Value {
     json!({
         "clientInfo": {
-            "name": "codex-channels",
-            "title": "codex-channels",
+            "name": "remotty",
+            "title": "remotty",
             "version": env!("CARGO_PKG_VERSION"),
         },
         "capabilities": {

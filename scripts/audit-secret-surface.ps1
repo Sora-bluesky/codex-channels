@@ -54,6 +54,7 @@ $trackedFiles = Get-TrackedFiles
 $failures = New-Object System.Collections.Generic.List[string]
 $assignmentPattern = '(?i)^\s*(?<name>LIVE_[A-Z0-9_]+|TELEGRAM_BOT_TOKEN)\s*=\s*(?<value>.+?)\s*$'
 $telegramTokenPattern = '\b\d{7,12}:[A-Za-z0-9_-]{20,}\b'
+$telegramBotUrlPattern = 'https://api\.telegram\.org/(file/)?bot\d{7,12}:[A-Za-z0-9_-]{20,}'
 
 foreach ($path in $trackedFiles) {
     if (-not (Test-TextFile -Path $path)) {
@@ -78,6 +79,10 @@ foreach ($path in $trackedFiles) {
 
         if ($line -match $telegramTokenPattern) {
             $failures.Add("${path}:$($index + 1) contains a Telegram bot token-like value") | Out-Null
+        }
+
+        if ($line -match $telegramBotUrlPattern) {
+            $failures.Add("${path}:$($index + 1) contains a Telegram bot API URL with an embedded token") | Out-Null
         }
     }
 }

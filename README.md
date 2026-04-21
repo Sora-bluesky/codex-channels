@@ -1,12 +1,20 @@
 [English](README.md) | [日本語](README.ja.md)
 
-# codex-channels
+# remotty
 
-`codex-channels` is a Windows bridge that lets you talk to Codex from Telegram.
+`remotty` is a Windows bridge that lets you talk to a local coding agent from Telegram.
 
 It runs on your Windows machine, receives messages from your Telegram bot, starts `codex`, and sends the result back to the same chat. The project is designed for people who want a simple chat-based control surface without exposing a public webhook server.
 
 Send a message on Telegram, let your Windows PC run `codex`, and get the reply back in the same chat.
+
+> [!WARNING]
+> **Disclaimer**
+>
+> This is an unofficial community project and is not affiliated with, endorsed by, or sponsored by OpenAI.
+> `Codex`, `ChatGPT`, and related marks are trademarks of OpenAI.
+> They are referenced here only to describe the target CLI or app that this tool works with.
+> All other trademarks belong to their respective owners.
 
 ## What It Does
 
@@ -25,23 +33,35 @@ This project is best for:
 - solo builders who want a lightweight remote control surface
 - developers who prefer local execution over hosted automation
 
-Today, setup is still command-line based. If you are comfortable with PowerShell and basic Telegram bot setup, you should be able to get started.
+Today, the preferred path is plugin-first, with the standalone CLI kept as a compatibility layer. If you are comfortable with PowerShell and basic Telegram bot setup, you should be able to get started.
+
+## Plugin-First Setup
+
+The supported setup path is now plugin-first.
+
+Use the local `remotty` plugin to:
+
+- save the bot token without echoing it in the terminal
+- pair your Telegram account without looking up `message.from.id`
+- start, stop, and inspect the bridge from one place
+
+The Rust bridge still runs as the local core. The plugin is the user-facing layer.
 
 ## Requirements
 
 - Windows 10 or Windows 11
+- Codex app, so you can install and run the local plugin commands
 - Rust toolchain from [rustup.rs](https://rustup.rs/) with `cargo` available on `PATH`
 - `codex` CLI available on `PATH`
 - a Telegram bot token from `@BotFather`
-- your Telegram user ID, so the bridge knows who is allowed to use it
 
 ## Quick Start
 
 ### 1. Clone the repository
 
 ```powershell
-git clone https://github.com/Sora-bluesky/codex-channels.git
-cd codex-channels
+git clone https://github.com/Sora-bluesky/remotty.git
+cd remotty
 ```
 
 ### 2. Create a Telegram bot
@@ -51,42 +71,67 @@ cd codex-channels
 3. Choose a bot name and username.
 4. Copy the bot token that BotFather returns.
 
-### 3. Store the bot token locally
+### 3. Install the local plugin
 
-This stores the token in Windows protected storage instead of a tracked file.
-The first `cargo run` may take a few minutes because it builds the project.
+Open this repository in Codex and install the local plugin entry named `remotty`.
 
-```powershell
-cargo run -- secret set codex-telegram-bot <YOUR_TELEGRAM_BOT_TOKEN>
+The repository already includes:
+
+- `.agents/plugins/marketplace.json`
+- `plugins/remotty/.codex-plugin/plugin.json`
+
+### 4. Configure the bot token
+
+Run the plugin command for setup:
+
+```text
+/remotty-configure
 ```
 
-### 4. Edit `bridge.toml`
+The command asks for the Telegram bot token without printing it back to the terminal and stores it in Windows protected storage.
+
+### 5. Pair your Telegram account
+
+Make sure the bridge is not already running. Then run:
+
+```text
+/remotty-pair
+```
+
+The command prints a short one-time code in the local terminal. Send `/pair <code>` to the bot from the Telegram account you want to allow. The command then waits for that exact message, shows the target `sender_id` and `chat_id`, and adds the sender to the local allowlist automatically.
+
+### 6. Lock access to the allowlist
+
+Run:
+
+```text
+/remotty-policy-allowlist
+```
+
+This confirms which Telegram sender IDs are currently allowed to send normal messages and approval decisions.
+
+### 7. Edit `bridge.toml`
 
 The repository already includes `bridge.toml` as a starting point.
 
 Update these values before the first run:
 
-- `telegram.admin_sender_ids`: your Telegram user ID
 - `workspaces[0].path`: the folder where Codex should work
 - `workspaces[0].writable_roots`: folders Codex is allowed to edit
 
-If you do not know your Telegram user ID yet, send a message to your bot and inspect the latest `message.from.id` field with:
-
-```powershell
-Invoke-RestMethod "https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/getUpdates" | ConvertTo-Json -Depth 8
-```
+`telegram.admin_sender_ids` may stay empty when you use pairing through the plugin. The plugin stores allowed senders in SQLite instead of asking you to look up IDs by hand.
 
 If you already use a named Codex profile, you can also set `codex.profile`. Otherwise, leave it out and the bridge will follow the local `codex` CLI default.
 
-### 5. Start the bridge
+### 8. Start the bridge
 
-```powershell
-cargo run
+```text
+/remotty-start
 ```
 
-If startup succeeds, leave the terminal window open.
+If you prefer the CLI directly, `cargo run` still works as a compatibility path.
 
-### 6. Open your bot in Telegram
+### 9. Open your bot in Telegram
 
 Send `/help` to the bot. If the bridge is running and your sender ID is allowed, you should see the available commands.
 
@@ -147,9 +192,9 @@ poll_timeout_sec = 30
 shutdown_grace_sec = 15
 
 [telegram]
-token_secret_ref = "codex-telegram-bot"
+token_secret_ref = "remotty-telegram-bot"
 allowed_chat_types = ["private"]
-admin_sender_ids = [123456789]
+admin_sender_ids = []
 
 [codex]
 binary = "codex"
@@ -182,10 +227,27 @@ checks_profile = "default"
 ## Security
 
 - Bot tokens should stay in local protected storage or environment variables
-- You can use `TELEGRAM_BOT_TOKEN` as a fallback when you do not want to store the token with `cargo run -- secret set`
+- You can use `TELEGRAM_BOT_TOKEN` as a fallback when you do not want to store the token in DPAPI
 - Do not commit live values such as `LIVE_TELEGRAM_BOT_TOKEN` or `LIVE_WORKSPACE`
+- Do not paste bot tokens, `api.telegram.org/bot...` URLs, or full terminal screenshots into chat tools or issues
 - Runtime state is ignored by `.gitignore`
 - Local secret-scanning hooks are recommended before commit and push
+
+## CLI Compatibility
+
+The standalone Rust CLI still works and remains the compatibility path while the plugin surface matures.
+
+Common equivalents are:
+
+- plugin `/remotty-configure` -> `cargo run -- telegram configure --config bridge.toml`
+- plugin `/remotty-pair` -> `cargo run -- telegram pair --config bridge.toml`
+- plugin `/remotty-policy-allowlist` -> `cargo run -- telegram policy allowlist --config bridge.toml`
+- plugin `/remotty-status` -> `cargo run -- service status`
+- plugin `/remotty-live-env-check` -> `cargo run -- telegram live-env-check`
+- plugin `/remotty-smoke-approval-accept` -> `cargo run -- telegram smoke approval accept --config bridge.toml`
+- plugin `/remotty-smoke-approval-decline` -> `cargo run -- telegram smoke approval decline --config bridge.toml`
+
+If you keep your config in a non-default path, pass the same `--config <path>` to the compatibility CLI commands.
 
 ## Run as a Windows Service
 
@@ -218,10 +280,35 @@ pwsh -NoProfile -File scripts/audit-public-surface.ps1
 pwsh -NoProfile -File scripts/audit-secret-surface.ps1
 ```
 
-### Optional live smoke test
+### Release documentation review
 
-The live smoke test is opt-in and does not run in CI.
+Every release must review the public documentation before running `scripts/bump-version.ps1`.
+The review must include `README.md` and `README.ja.md`.
+Japanese public documentation must be reviewed with `claude-opus-4-7`.
+
+For local release work, keep the review record outside the repository.
+The default local path is:
+
+```text
+%LOCALAPPDATA%\remotty\release-doc-reviews\vX.Y.Z.psd1
+```
+
+For tag-triggered GitHub releases, commit the public review record here:
+
+```text
+.github/release-doc-reviews/vX.Y.Z.psd1
+```
+
+The record must include the release tag, reviewed files, approval status, reviewer model, and short notes.
+`scripts/assert-release-doc-review.ps1` checks the record.
+`scripts/bump-version.ps1` calls that check before it creates a release branch.
+`.github/workflows/release.yml` runs the same check before publishing release assets.
+
+### Optional manual smoke
+
+The manual smoke run is opt-in and does not run in CI.
 Keep the `LIVE_*` values in the current shell only. Do not write them into tracked files.
+Do not paste the values into chat, and do not share terminal screenshots that include them.
 
 Required environment variables:
 
@@ -230,6 +317,9 @@ Required environment variables:
 - `LIVE_TELEGRAM_SENDER_ID`
 - `LIVE_WORKSPACE`
 
+`LIVE_WORKSPACE` must point to a dedicated directory that already contains a file named `.remotty-live-smoke-ok`.
+This command refuses to write into a directory that does not carry that explicit opt-in marker.
+
 Optional environment variables:
 
 - `LIVE_CODEX_BIN`
@@ -237,27 +327,34 @@ Optional environment variables:
 - `LIVE_TIMEOUT_SEC`
 - `LIVE_APPROVAL_MODE`
 
-Run:
+Check the environment first:
 
 ```powershell
-cargo test --features live-e2e --test live_end_to_end -- --ignored --nocapture
+cargo run -- telegram live-env-check
 ```
 
-Use a dedicated test bot and chat when possible.
+Then run the approval-accept smoke:
 
-For approval testing with `app_server` transport:
+```powershell
+cargo run -- telegram smoke approval accept --config bridge.toml
+```
+
+For the approval-decline smoke:
 
 ```powershell
 $env:LIVE_APPROVAL_MODE = "app_server"
-cargo test --features live-e2e --test live_approval_end_to_end -- --ignored --nocapture
+cargo run -- telegram smoke approval decline --config bridge.toml
 ```
+
+Use a dedicated test bot and chat when possible.
+Use a dedicated smoke workspace as well.
 
 ## Repository Layout
 
 ```text
-codex-channels/
+remotty/
 ├── src/                    # bridge runtime, Telegram client, Codex runner
-├── tests/                  # config, smoke, and safety tests
+├── tests/                  # config, mock Telegram, and safety tests
 ├── scripts/                # maintenance and validation scripts
 ├── bridge.toml             # local configuration starter
 ├── README.md               # English README

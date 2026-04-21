@@ -10,15 +10,16 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-common.ps1')
 . (Join-Path $PSScriptRoot 'planning-paths.ps1')
 
-$resolvedRepoRoot = Resolve-CodexChannelsRepoRoot -RepoRoot $RepoRoot
+$resolvedRepoRoot = Resolve-RemottyRepoRoot -RepoRoot $RepoRoot
 $versionFile = Join-Path $resolvedRepoRoot 'VERSION'
 $cargoTomlPath = Join-Path $resolvedRepoRoot 'Cargo.toml'
 $syncRoadmapScript = Join-Path $PSScriptRoot 'sync-roadmap.ps1'
 $generateNotesScript = Join-Path $PSScriptRoot 'generate-release-notes.ps1'
 $validatePlanningScript = Join-Path $PSScriptRoot 'validate-planning.ps1'
-$backlogPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
-$roadmapPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
-$titlePath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
+$assertReleaseDocReviewScript = Join-Path $PSScriptRoot 'assert-release-doc-review.ps1'
+$backlogPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
+$roadmapPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
+$titlePath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     if (-not (Test-Path -LiteralPath $versionFile)) {
@@ -34,6 +35,7 @@ $tag = Get-ReleaseTag -Version $normalizedVersion
 if (-not $SyncOnly) {
     Assert-ReleasePlanningInputsExist -BacklogPath $backlogPath -RoadmapTitleJaPath $titlePath
     & $validatePlanningScript -BacklogPath $backlogPath -RoadmapTitleJaPath $titlePath | Out-Null
+    & $assertReleaseDocReviewScript -Version $normalizedVersion | Out-Null
 }
 
 [System.IO.File]::WriteAllText($versionFile, $normalizedVersion, [System.Text.UTF8Encoding]::new($false))

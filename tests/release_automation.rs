@@ -108,7 +108,7 @@ fn generate_release_notes_falls_back_to_planning_titles() -> Result<()> {
     status: done
     priority: P0
     target_version: v0.1.1
-    repo: codex-channels
+    repo: remotty
 "#,
     )?;
 
@@ -175,7 +175,7 @@ fn generate_release_notes_uses_backlog_env_override_when_no_argument_is_passed()
     status: done
     priority: P0
     target_version: v0.1.1
-    repo: codex-channels
+    repo: remotty
 "#,
     )?;
     write_file(
@@ -186,7 +186,7 @@ fn generate_release_notes_uses_backlog_env_override_when_no_argument_is_passed()
     status: done
     priority: P0
     target_version: v0.1.1
-    repo: codex-channels
+    repo: remotty
 "#,
     )?;
 
@@ -204,8 +204,8 @@ fn generate_release_notes_uses_backlog_env_override_when_no_argument_is_passed()
         .arg(&history_path)
         .arg("-OutputPath")
         .arg(&output_path)
-        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
-        .env("CODEX_CHANNELS_BACKLOG_PATH", &explicit_backlog_path)
+        .env("REMOTTY_PLANNING_ROOT", &planning_root)
+        .env("REMOTTY_BACKLOG_PATH", &explicit_backlog_path)
         .output()
         .context("failed to run generate-release-notes.ps1 with env override")?;
 
@@ -231,7 +231,7 @@ fn bump_version_sync_only_updates_version_sources() -> Result<()> {
     write_file(
         &cargo_toml_path,
         r#"[package]
-name = "codex-telegram-bridge"
+name = "remotty"
 version = "0.1.0"
 edition = "2024"
 "#,
@@ -264,6 +264,147 @@ edition = "2024"
 }
 
 #[test]
+fn release_doc_review_gate_requires_review_file() -> Result<()> {
+    let temp = TempDir::new()?;
+    let missing_review = temp.path().join("missing-review.psd1");
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(
+            repo_root()
+                .join("scripts")
+                .join("assert-release-doc-review.ps1"),
+        )
+        .arg("-Version")
+        .arg("0.1.18")
+        .arg("-ReviewPath")
+        .arg(&missing_review)
+        .output()
+        .context("failed to run assert-release-doc-review.ps1")?;
+
+    assert!(
+        !output.status.success(),
+        "doc review gate unexpectedly passed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Release documentation review is required"));
+
+    Ok(())
+}
+
+#[test]
+fn release_doc_review_gate_accepts_opus_review_record() -> Result<()> {
+    let temp = TempDir::new()?;
+    let review_path = temp.path().join("v0.1.18.psd1");
+    write_file(
+        &review_path,
+        r#"@{
+    Version = "v0.1.18"
+    EnglishReviewStatus = "approved"
+    JapaneseReviewStatus = "approved"
+    JapaneseReviewerModel = "claude-opus-4-7"
+    ReviewedDocs = @("README.md", "README.ja.md", "plugins/remotty/README.md")
+    Notes = "English and Japanese public docs were reviewed before release."
+}"#,
+    )?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(
+            repo_root()
+                .join("scripts")
+                .join("assert-release-doc-review.ps1"),
+        )
+        .arg("-Version")
+        .arg("v0.1.18")
+        .arg("-ReviewPath")
+        .arg(&review_path)
+        .output()
+        .context("failed to run assert-release-doc-review.ps1")?;
+
+    assert!(
+        output.status.success(),
+        "doc review gate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn release_doc_review_gate_rejects_non_opus_japanese_review() -> Result<()> {
+    let temp = TempDir::new()?;
+    let review_path = temp.path().join("v0.1.18.psd1");
+    write_file(
+        &review_path,
+        r#"@{
+    Version = "v0.1.18"
+    EnglishReviewStatus = "approved"
+    JapaneseReviewStatus = "approved"
+    JapaneseReviewerModel = "claude-sonnet-4-5"
+    ReviewedDocs = @("README.md", "README.ja.md")
+    Notes = "Japanese docs were checked."
+}"#,
+    )?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(
+            repo_root()
+                .join("scripts")
+                .join("assert-release-doc-review.ps1"),
+        )
+        .arg("-Version")
+        .arg("v0.1.18")
+        .arg("-ReviewPath")
+        .arg(&review_path)
+        .output()
+        .context("failed to run assert-release-doc-review.ps1")?;
+
+    assert!(
+        !output.status.success(),
+        "doc review gate unexpectedly accepted non-Opus review"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("claude-opus-4-7"));
+
+    Ok(())
+}
+
+#[test]
+fn release_workflow_runs_doc_review_gate_before_publishing() -> Result<()> {
+    let workflow = fs::read_to_string(
+        repo_root()
+            .join(".github")
+            .join("workflows")
+            .join("release.yml"),
+    )?;
+    let gate = "scripts/assert-release-doc-review.ps1";
+    let publish = "softprops/action-gh-release";
+
+    let gate_index = workflow
+        .find(gate)
+        .context("release workflow must run release documentation review gate")?;
+    let publish_index = workflow
+        .find(publish)
+        .context("release workflow must publish GitHub release assets")?;
+
+    assert!(
+        gate_index < publish_index,
+        "release documentation review gate must run before release publishing"
+    );
+    assert!(
+        workflow.contains(".github/release-doc-reviews/${{ github.ref_name }}.psd1"),
+        "release workflow must use the committed public review record"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn bump_version_fails_when_planning_inputs_are_missing() -> Result<()> {
     let temp = TempDir::new()?;
     let planning_root = temp.path().join("planning-root");
@@ -274,7 +415,7 @@ fn bump_version_fails_when_planning_inputs_are_missing() -> Result<()> {
     write_file(
         &cargo_toml_path,
         r#"[package]
-name = "codex-telegram-bridge"
+name = "remotty"
 version = "0.1.0"
 edition = "2024"
 "#,
@@ -289,7 +430,7 @@ edition = "2024"
         .arg(temp.path())
         .arg("-Version")
         .arg("0.1.8")
-        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .env("REMOTTY_PLANNING_ROOT", &planning_root)
         .output()
         .context("failed to run bump-version.ps1 with missing planning inputs")?;
 
@@ -322,7 +463,7 @@ fn release_preflight_allows_missing_title_map_when_backlog_exists() -> Result<()
     status: done
     priority: P0
     target_version: v0.1.8
-    repo: codex-channels
+    repo: remotty
 "#,
     )?;
 
@@ -364,7 +505,7 @@ fn bump_version_fails_when_title_map_is_invalid() -> Result<()> {
     write_file(
         &cargo_toml_path,
         r#"[package]
-name = "codex-telegram-bridge"
+name = "remotty"
 version = "0.1.0"
 edition = "2024"
 "#,
@@ -378,7 +519,7 @@ edition = "2024"
     status: done
     priority: P0
     target_version: v0.1.8
-    repo: codex-channels
+    repo: remotty
 "#,
     )?;
     write_file(
@@ -394,7 +535,7 @@ edition = "2024"
         .arg(temp.path())
         .arg("-Version")
         .arg("0.1.8")
-        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .env("REMOTTY_PLANNING_ROOT", &planning_root)
         .output()
         .context("failed to run bump-version.ps1 with invalid title map")?;
 
@@ -424,7 +565,7 @@ fn bump_version_fails_when_backlog_is_invalid() -> Result<()> {
     write_file(
         &cargo_toml_path,
         r#"[package]
-name = "codex-telegram-bridge"
+name = "remotty"
 version = "0.1.0"
 edition = "2024"
 "#,
@@ -438,7 +579,7 @@ edition = "2024"
     status: progress
     priority: P0
     target_version: 0.1.8
-    repo: codex-channels
+    repo: remotty
 "#,
     )?;
 
@@ -450,7 +591,7 @@ edition = "2024"
         .arg(temp.path())
         .arg("-Version")
         .arg("0.1.8")
-        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .env("REMOTTY_PLANNING_ROOT", &planning_root)
         .output()
         .context("failed to run bump-version.ps1 with invalid backlog")?;
 

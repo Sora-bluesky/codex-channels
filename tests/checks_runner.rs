@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Result;
-use codex_telegram_bridge::config::{
+use remotty::config::{
     CheckCommand, CheckProfile, Config, DEFAULT_MAX_TURNS_BUDGET, checks::run_profile,
 };
 use tempfile::tempdir;
@@ -129,9 +129,63 @@ checks_profile = "default"
     assert_eq!(config.policy.max_turns_limit, DEFAULT_MAX_TURNS_BUDGET);
     assert_eq!(
         config.codex.transport,
-        codex_telegram_bridge::config::CodexTransport::Exec
+        remotty::config::CodexTransport::Exec
     );
     assert_eq!(config.codex.profile, None);
+    assert_eq!(config.telegram.api_base_url, "https://api.telegram.org");
+    assert_eq!(
+        config.telegram.file_base_url,
+        "https://api.telegram.org/file"
+    );
+    Ok(())
+}
+
+#[test]
+fn config_allows_empty_admin_sender_ids_for_plugin_pairing() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = []
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let config = Config::load(&config_path)?;
+    assert!(config.telegram.admin_sender_ids.is_empty());
     Ok(())
 }
 
@@ -183,8 +237,315 @@ checks_profile = "default"
     let config = Config::load(&config_path)?;
     assert_eq!(
         config.codex.transport,
-        codex_telegram_bridge::config::CodexTransport::AppServer
+        remotty::config::CodexTransport::AppServer
     );
+    Ok(())
+}
+
+#[test]
+fn config_accepts_local_fake_telegram_base_urls() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = []
+api_base_url = "http://127.0.0.1:18080"
+file_base_url = "http://127.0.0.1:18080/file"
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let config = Config::load(&config_path)?;
+    assert_eq!(config.telegram.api_base_url, "http://127.0.0.1:18080");
+    assert_eq!(config.telegram.file_base_url, "http://127.0.0.1:18080/file");
+    Ok(())
+}
+
+#[test]
+fn config_rejects_local_api_base_url_with_path_or_query() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = []
+api_base_url = "http://127.0.0.1:18080/bot?debug=true"
+file_base_url = "http://127.0.0.1:18080/file"
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let error = Config::load(&config_path).expect_err("config should reject local api path");
+    assert!(error.to_string().contains("telegram.api_base_url"));
+    Ok(())
+}
+
+#[test]
+fn config_rejects_local_file_base_url_with_userinfo() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = []
+api_base_url = "http://127.0.0.1:18080"
+file_base_url = "http://user:pass@127.0.0.1:18080/file"
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let error = Config::load(&config_path).expect_err("config should reject local file userinfo");
+    assert!(error.to_string().contains("telegram.file_base_url"));
+    Ok(())
+}
+
+#[test]
+fn config_rejects_non_telegram_non_local_base_urls() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = []
+api_base_url = "https://evil.example"
+file_base_url = "https://evil.example/file"
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let error = Config::load(&config_path).expect_err("config should reject non-local override");
+    assert!(error.to_string().contains("localhost test server"));
+    Ok(())
+}
+
+#[test]
+fn config_rejects_official_api_base_url_with_extra_path() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = []
+api_base_url = "https://api.telegram.org/file"
+file_base_url = "https://api.telegram.org/file"
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let error = Config::load(&config_path).expect_err("config should reject invalid api base");
+    assert!(error.to_string().contains("telegram.api_base_url"));
+    Ok(())
+}
+
+#[test]
+fn config_rejects_official_file_base_url_without_file_path() -> Result<()> {
+    let dir = tempdir()?;
+    let config_path = dir.path().join("bridge.toml");
+    fs::write(
+        &config_path,
+        r#"
+[service]
+run_mode = "console"
+poll_timeout_sec = 30
+shutdown_grace_sec = 15
+
+[telegram]
+token_secret_ref = "secret"
+allowed_chat_types = ["private"]
+admin_sender_ids = []
+api_base_url = "https://api.telegram.org"
+file_base_url = "https://api.telegram.org"
+
+[codex]
+binary = "codex"
+model = "gpt-5.4"
+sandbox = "workspace-write"
+approval = "on-request"
+
+[storage]
+db_path = "state/bridge.db"
+state_dir = "state"
+temp_dir = "state/tmp"
+log_dir = "state/logs"
+
+[policy]
+default_mode = "await_reply"
+progress_edit_interval_ms = 5000
+max_output_chars = 12000
+
+[[workspaces]]
+id = "main"
+path = "C:/workspace"
+writable_roots = ["C:/workspace"]
+default_mode = "await_reply"
+continue_prompt = "continue"
+checks_profile = "default"
+"#,
+    )?;
+
+    let error = Config::load(&config_path).expect_err("config should reject invalid file base");
+    assert!(error.to_string().contains("telegram.file_base_url"));
     Ok(())
 }
 

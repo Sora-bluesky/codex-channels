@@ -18,13 +18,13 @@ jobs:
       matrix:
         include:
           - target: x86_64-pc-windows-msvc
-            artifact: codex-channels-windows-x64
-            binary: codex-telegram-bridge.exe
-            renamed: codex-telegram-bridge-x64.exe
+            artifact: remotty-windows-x64
+            binary: remotty.exe
+            renamed: remotty-x64.exe
           - target: aarch64-pc-windows-msvc
-            artifact: codex-channels-windows-arm64
-            binary: codex-telegram-bridge.exe
-            renamed: codex-telegram-bridge-arm64.exe
+            artifact: remotty-windows-arm64
+            binary: remotty.exe
+            renamed: remotty-arm64.exe
 
     steps:
       - name: Checkout
@@ -63,11 +63,15 @@ jobs:
       - name: Install PowerShell
         run: sudo apt-get update && sudo apt-get install -y powershell
 
+      - name: Verify release documentation review
+        shell: pwsh
+        run: ./scripts/assert-release-doc-review.ps1 -Version "${{ github.ref_name }}" -ReviewPath ".github/release-doc-reviews/${{ github.ref_name }}.psd1"
+
       - name: Prepare release assets
         run: |
           mkdir -p release
-          cp codex-channels-windows-x64/codex-telegram-bridge.exe release/codex-telegram-bridge-x64.exe
-          cp codex-channels-windows-arm64/codex-telegram-bridge.exe release/codex-telegram-bridge-arm64.exe
+          cp remotty-windows-x64/remotty.exe release/remotty-x64.exe
+          cp remotty-windows-arm64/remotty.exe release/remotty-arm64.exe
           cd release && sha256sum *.exe > SHA256SUMS
 
       - name: Generate release body

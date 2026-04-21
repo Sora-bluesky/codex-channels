@@ -1,18 +1,18 @@
 [CmdletBinding()]
 param()
 
-function Get-CodexChannelsPlanningRootMarkerPath {
-    $explicitMarkerPath = [Environment]::GetEnvironmentVariable('CODEX_CHANNELS_PLANNING_ROOT_MARKER')
+function Get-RemottyPlanningRootMarkerPath {
+    $explicitMarkerPath = [Environment]::GetEnvironmentVariable('REMOTTY_PLANNING_ROOT_MARKER')
     if (-not [string]::IsNullOrWhiteSpace($explicitMarkerPath)) {
         return $explicitMarkerPath
     }
 
     $localAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [Environment]::GetFolderPath('LocalApplicationData') }
-    return Join-Path $localAppData 'codex-channels\planning-root.txt'
+    return Join-Path $localAppData 'remotty\planning-root.txt'
 }
 
-function Get-CodexChannelsPlanningRootFromMarker {
-    $markerPath = Get-CodexChannelsPlanningRootMarkerPath
+function Get-RemottyPlanningRootFromMarker {
+    $markerPath = Get-RemottyPlanningRootMarkerPath
     if (-not (Test-Path -LiteralPath $markerPath)) {
         return $null
     }
@@ -29,7 +29,7 @@ function Get-CodexChannelsPlanningRootFromMarker {
     return $null
 }
 
-function Find-CodexChannelsPlanningRoot {
+function Find-RemottyPlanningRoot {
     param([Parameter(Mandatory = $true)][string]$UserProfile)
 
     try {
@@ -41,7 +41,7 @@ function Find-CodexChannelsPlanningRoot {
                 continue
             }
 
-            if ($directory -notmatch '[\\/]codex-channels[\\/]planning$') {
+            if ($directory -notmatch '[\\/]remotty[\\/]planning$') {
                 continue
             }
 
@@ -62,7 +62,7 @@ function Find-CodexChannelsPlanningRoot {
 
         $preferred = @(
             $candidates | Sort-Object `
-                @{ Expression = { if ($_ -match '[\\/]iCloudDrive[\\/]iCloud~md~obsidian[\\/]MainVault[\\/]Projects[\\/]codex-channels[\\/]planning$') { 0 } else { 1 } } }, `
+                @{ Expression = { if ($_ -match '[\\/]iCloudDrive[\\/]iCloud~md~obsidian[\\/]MainVault[\\/]Projects[\\/]remotty[\\/]planning$') { 0 } else { 1 } } }, `
                 @{ Expression = { $_.Length } }, `
                 @{ Expression = { $_ } }
         )
@@ -77,9 +77,9 @@ function Find-CodexChannelsPlanningRoot {
     return $null
 }
 
-function Get-CodexChannelsDefaultPlanningRoot {
+function Get-RemottyDefaultPlanningRoot {
     $cachedPlanningRoot = $null
-    $cachedVariable = Get-Variable -Scope Script -Name CodexChannelsDefaultPlanningRoot -ErrorAction SilentlyContinue
+    $cachedVariable = Get-Variable -Scope Script -Name RemottyDefaultPlanningRoot -ErrorAction SilentlyContinue
     if ($cachedVariable) {
         $cachedPlanningRoot = [string]$cachedVariable.Value
     }
@@ -89,31 +89,31 @@ function Get-CodexChannelsDefaultPlanningRoot {
     }
 
     $userProfile = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
-    $markerRoot = Get-CodexChannelsPlanningRootFromMarker
+    $markerRoot = Get-RemottyPlanningRootFromMarker
     if (-not [string]::IsNullOrWhiteSpace($markerRoot)) {
-        $script:CodexChannelsDefaultPlanningRoot = $markerRoot
-        return $script:CodexChannelsDefaultPlanningRoot
+        $script:RemottyDefaultPlanningRoot = $markerRoot
+        return $script:RemottyDefaultPlanningRoot
     }
 
-    $discoveredRoot = Find-CodexChannelsPlanningRoot -UserProfile $userProfile
+    $discoveredRoot = Find-RemottyPlanningRoot -UserProfile $userProfile
     if (-not [string]::IsNullOrWhiteSpace($discoveredRoot)) {
-        $script:CodexChannelsDefaultPlanningRoot = $discoveredRoot
-        return $script:CodexChannelsDefaultPlanningRoot
+        $script:RemottyDefaultPlanningRoot = $discoveredRoot
+        return $script:RemottyDefaultPlanningRoot
     }
 
-    $script:CodexChannelsDefaultPlanningRoot = Join-Path $userProfile '.codex-channels\planning'
-    return $script:CodexChannelsDefaultPlanningRoot
+    $script:RemottyDefaultPlanningRoot = Join-Path $userProfile '.remotty\planning'
+    return $script:RemottyDefaultPlanningRoot
 }
 
-function Get-CodexChannelsPlanningRoot {
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CHANNELS_PLANNING_ROOT)) {
-        return $env:CODEX_CHANNELS_PLANNING_ROOT
+function Get-RemottyPlanningRoot {
+    if (-not [string]::IsNullOrWhiteSpace($env:REMOTTY_PLANNING_ROOT)) {
+        return $env:REMOTTY_PLANNING_ROOT
     }
 
-    return Get-CodexChannelsDefaultPlanningRoot
+    return Get-RemottyDefaultPlanningRoot
 }
 
-function Resolve-CodexChannelsPlanningFilePath {
+function Resolve-RemottyPlanningFilePath {
     param(
         [Parameter(Mandatory = $true)]
         [string]$RepoRoot,
@@ -133,7 +133,7 @@ function Resolve-CodexChannelsPlanningFilePath {
         return $explicitPath
     }
 
-    $externalPath = Join-Path (Get-CodexChannelsPlanningRoot) $DefaultFileName
+    $externalPath = Join-Path (Get-RemottyPlanningRoot) $DefaultFileName
     $localPath = Join-Path $RepoRoot $LocalRelativePath
 
     if ((Test-Path -LiteralPath $externalPath) -or -not (Test-Path -LiteralPath $localPath)) {
@@ -143,7 +143,7 @@ function Resolve-CodexChannelsPlanningFilePath {
     return $localPath
 }
 
-function Resolve-CodexChannelsExternalPlanningFilePath {
+function Resolve-RemottyExternalPlanningFilePath {
     param(
         [Parameter(Mandatory = $true)]
         [string]$EnvironmentVariable,
@@ -157,5 +157,5 @@ function Resolve-CodexChannelsExternalPlanningFilePath {
         return $explicitPath
     }
 
-    return Join-Path (Get-CodexChannelsPlanningRoot) $DefaultFileName
+    return Join-Path (Get-RemottyPlanningRoot) $DefaultFileName
 }

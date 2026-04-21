@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use service_manager::{
     RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceStartCtx,
     ServiceStatus as ManagedServiceStatus, ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
@@ -22,7 +22,8 @@ use windows_service::service_dispatcher;
 use crate::config::Config;
 use crate::engine;
 
-const SERVICE_NAME: &str = "codex_telegram_bridge";
+const SERVICE_NAME: &str = "remotty";
+const LEGACY_SERVICE_NAMES: &[&str] = &["codex_telegram_bridge", "codex-telegram-bridge"];
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
 static SERVICE_CONFIG: OnceLock<Config> = OnceLock::new();
@@ -33,9 +34,26 @@ pub fn service_name() -> &'static str {
     SERVICE_NAME
 }
 
+pub fn cli_service_name() -> Result<String> {
+    let manager = native_service_manager().context("failed to open service manager")?;
+    Ok(display_service_name(
+        find_existing_service_label(manager.as_ref())?.as_ref(),
+    ))
+}
+
 pub fn install_service(config_path: impl AsRef<Path>) -> Result<PathBuf> {
     let config_path = canonicalize_config_path(config_path)?;
     let manager = native_service_manager().context("failed to open service manager")?;
+    let legacy_labels = installed_legacy_service_labels(manager.as_ref())?;
+    if !legacy_labels.is_empty() {
+        bail!(
+            "legacy windows service is still installed ({:?}); uninstall it before installing `remotty`",
+            legacy_labels
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+    }
     manager
         .install(build_install_context(
             std::env::current_exe().context("failed to locate current executable")?,
@@ -47,36 +65,39 @@ pub fn install_service(config_path: impl AsRef<Path>) -> Result<PathBuf> {
 
 pub fn uninstall_service() -> Result<()> {
     let manager = native_service_manager().context("failed to open service manager")?;
+    let label = find_existing_service_label(manager.as_ref())?.unwrap_or(service_label()?);
     manager
-        .uninstall(ServiceUninstallCtx {
-            label: service_label()?,
-        })
+        .uninstall(ServiceUninstallCtx { label })
         .context("failed to uninstall windows service")?;
     Ok(())
 }
 
 pub fn start_installed_service() -> Result<()> {
     let manager = native_service_manager().context("failed to open service manager")?;
+    let label = find_existing_service_label(manager.as_ref())?.unwrap_or(service_label()?);
+    ensure_startable_service_label(&label)?;
     manager
-        .start(ServiceStartCtx {
-            label: service_label()?,
-        })
+        .start(ServiceStartCtx { label })
         .context("failed to start windows service")?;
     Ok(())
 }
 
 pub fn stop_installed_service() -> Result<()> {
     let manager = native_service_manager().context("failed to open service manager")?;
+    let label = find_existing_service_label(manager.as_ref())?.unwrap_or(service_label()?);
     manager
-        .stop(ServiceStopCtx {
-            label: service_label()?,
-        })
+        .stop(ServiceStopCtx { label })
         .context("failed to stop windows service")?;
     Ok(())
 }
 
 pub fn installed_service_status() -> Result<ManagedServiceStatus> {
     let manager = native_service_manager().context("failed to open service manager")?;
+    if let Some(label) = find_existing_service_label(manager.as_ref())? {
+        return manager
+            .status(ServiceStatusCtx { label })
+            .context("failed to query windows service status");
+    }
     manager
         .status(ServiceStatusCtx {
             label: service_label()?,
@@ -177,6 +198,65 @@ fn service_label() -> Result<ServiceLabel> {
     ServiceLabel::from_str(SERVICE_NAME).context("failed to parse windows service label")
 }
 
+fn legacy_service_labels() -> Result<Vec<ServiceLabel>> {
+    LEGACY_SERVICE_NAMES
+        .iter()
+        .map(|name| {
+            ServiceLabel::from_str(name)
+                .with_context(|| format!("failed to parse legacy windows service label `{name}`"))
+        })
+        .collect()
+}
+
+fn find_existing_service_label(
+    manager: &dyn service_manager::ServiceManager,
+) -> Result<Option<ServiceLabel>> {
+    let current = service_label()?;
+    let legacy_labels = installed_legacy_service_labels(manager)?;
+    let current_installed = !matches!(
+        manager.status(ServiceStatusCtx {
+            label: current.clone(),
+        })?,
+        ManagedServiceStatus::NotInstalled
+    );
+    if current_installed && !legacy_labels.is_empty() {
+        bail!(
+            "both `remotty` and legacy windows services are installed ({:?}); remove the legacy service first",
+            legacy_labels
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+    }
+    if current_installed {
+        return Ok(Some(current));
+    }
+
+    if let Some(label) = legacy_labels.into_iter().next() {
+        return Ok(Some(label));
+    }
+
+    Ok(None)
+}
+
+fn installed_legacy_service_labels(
+    manager: &dyn service_manager::ServiceManager,
+) -> Result<Vec<ServiceLabel>> {
+    let mut installed = Vec::new();
+    for label in legacy_service_labels()? {
+        if matches!(
+            manager.status(ServiceStatusCtx {
+                label: label.clone(),
+            })?,
+            ManagedServiceStatus::NotInstalled
+        ) {
+            continue;
+        }
+        installed.push(label);
+    }
+    Ok(installed)
+}
+
 fn build_install_context(program: PathBuf, config_path: PathBuf) -> Result<ServiceInstallCtx> {
     let working_directory = config_path
         .parent()
@@ -201,9 +281,30 @@ fn build_install_context(program: PathBuf, config_path: PathBuf) -> Result<Servi
     })
 }
 
+fn ensure_startable_service_label(label: &ServiceLabel) -> Result<()> {
+    if label.to_string() == SERVICE_NAME {
+        return Ok(());
+    }
+
+    bail!(
+        "legacy windows service `{}` cannot be started by the `remotty` host. uninstall the legacy service, then install `remotty` again.",
+        label
+    )
+}
+
+fn display_service_name(label: Option<&ServiceLabel>) -> String {
+    label
+        .map(ToString::to_string)
+        .unwrap_or_else(|| SERVICE_NAME.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_install_context, format_service_status, service_name};
+    use super::{
+        LEGACY_SERVICE_NAMES, build_install_context, display_service_name,
+        ensure_startable_service_label, format_service_status, service_label, service_name,
+    };
+    use anyhow::Result;
     use service_manager::ServiceStatus as ManagedServiceStatus;
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -211,16 +312,13 @@ mod tests {
     #[test]
     fn build_install_context_uses_service_host_and_config_directory() {
         let context = build_install_context(
-            PathBuf::from("C:/tools/codex-telegram-bridge.exe"),
+            PathBuf::from("C:/tools/remotty.exe"),
             PathBuf::from("C:/workspace/bridge.toml"),
         )
         .expect("install context should build");
 
         assert_eq!(context.label.to_string(), service_name());
-        assert_eq!(
-            context.program,
-            PathBuf::from("C:/tools/codex-telegram-bridge.exe")
-        );
+        assert_eq!(context.program, PathBuf::from("C:/tools/remotty.exe"));
         assert_eq!(
             context.args,
             vec![
@@ -251,5 +349,31 @@ mod tests {
             format_service_status(&ManagedServiceStatus::NotInstalled),
             "not_installed"
         );
+    }
+
+    #[test]
+    fn legacy_service_name_list_keeps_previous_service_label() {
+        assert!(LEGACY_SERVICE_NAMES.contains(&"codex_telegram_bridge"));
+    }
+
+    #[test]
+    fn startable_service_label_rejects_legacy_name() -> Result<()> {
+        let legacy = service_manager::ServiceLabel {
+            qualifier: None,
+            organization: None,
+            application: "codex_telegram_bridge".to_owned(),
+        };
+        let error =
+            ensure_startable_service_label(&legacy).expect_err("legacy label should be rejected");
+        assert!(error.to_string().contains("legacy windows service"));
+
+        let current = service_label()?;
+        ensure_startable_service_label(&current)?;
+        Ok(())
+    }
+
+    #[test]
+    fn display_service_name_falls_back_to_current_name() {
+        assert_eq!(display_service_name(None), service_name());
     }
 }

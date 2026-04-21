@@ -76,7 +76,7 @@ function Get-TaskValues {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$planningRoot = Get-CodexChannelsPlanningRoot
+$planningRoot = Get-RemottyPlanningRoot
 $externalBacklogPath = Join-Path $planningRoot 'backlog.yaml'
 $externalTitlePath = Join-Path $planningRoot 'roadmap-title-ja.psd1'
 

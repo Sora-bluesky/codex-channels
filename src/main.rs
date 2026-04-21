@@ -2,11 +2,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use codex_telegram_bridge::cli::{CliCommand, SecretCommand, ServiceCommand, parse_args};
-use codex_telegram_bridge::config::{Config, RunMode};
-use codex_telegram_bridge::engine;
-use codex_telegram_bridge::service;
-use codex_telegram_bridge::windows_secret::{delete_secret, store_secret};
+use remotty::cli::{CliCommand, SecretCommand, ServiceCommand, TelegramCommand, parse_args};
+use remotty::config::{Config, RunMode};
+use remotty::engine;
+use remotty::live_smoke::{self, SmokeScenario};
+use remotty::service;
+use remotty::telegram_cli;
+use remotty::windows_secret::{delete_secret, store_secret};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -36,27 +38,62 @@ async fn main() -> Result<()> {
             Ok(())
         }
         CliCommand::Service(ServiceCommand::Uninstall) => {
+            let service_name = service::cli_service_name()?;
             service::uninstall_service()?;
-            println!("uninstalled windows service `{}`", service::service_name());
+            println!("uninstalled windows service `{service_name}`");
             Ok(())
         }
         CliCommand::Service(ServiceCommand::Start) => {
+            let service_name = service::cli_service_name()?;
             service::start_installed_service()?;
-            println!("started windows service `{}`", service::service_name());
+            println!("started windows service `{service_name}`");
             Ok(())
         }
         CliCommand::Service(ServiceCommand::Stop) => {
+            let service_name = service::cli_service_name()?;
             service::stop_installed_service()?;
-            println!("stopped windows service `{}`", service::service_name());
+            println!("stopped windows service `{service_name}`");
             Ok(())
         }
         CliCommand::Service(ServiceCommand::Status) => {
+            let service_name = service::cli_service_name()?;
             let status = service::installed_service_status()?;
             println!(
                 "windows service `{}` status: {}",
-                service::service_name(),
+                service_name,
                 service::format_service_status(&status)
             );
+            Ok(())
+        }
+        CliCommand::Telegram(TelegramCommand::Configure { config_path }) => {
+            println!("{}", telegram_cli::configure(config_path).await?);
+            Ok(())
+        }
+        CliCommand::Telegram(TelegramCommand::Pair { config_path }) => {
+            println!("{}", telegram_cli::pair(config_path).await?);
+            Ok(())
+        }
+        CliCommand::Telegram(TelegramCommand::PolicyAllowlist { config_path }) => {
+            println!("{}", telegram_cli::policy_allowlist(config_path)?);
+            Ok(())
+        }
+        CliCommand::Telegram(TelegramCommand::LiveEnvCheck) => {
+            println!("{}", telegram_cli::live_env_check());
+            Ok(())
+        }
+        CliCommand::Telegram(TelegramCommand::Smoke {
+            scenario,
+            config_path,
+        }) => {
+            let scenario = match scenario {
+                remotty::cli::TelegramSmokeScenario::ApprovalAccept => {
+                    SmokeScenario::ApprovalAccept
+                }
+                remotty::cli::TelegramSmokeScenario::ApprovalDecline => {
+                    SmokeScenario::ApprovalDecline
+                }
+            };
+            println!("{}", live_smoke::run_smoke(config_path, scenario).await?);
             Ok(())
         }
     }

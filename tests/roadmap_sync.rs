@@ -64,7 +64,7 @@ fn sync_roadmap_generates_grouped_japanese_view() -> Result<()> {
     status: done
     priority: P0
     target_version: v0.1.0
-    repo: codex-channels
+    repo: remotty
 
 # === v0.1.1: Service commands ===
 - id: TASK-002
@@ -72,7 +72,7 @@ fn sync_roadmap_generates_grouped_japanese_view() -> Result<()> {
     status: active
     priority: P1
     target_version: v0.1.1
-    repo: codex-channels
+    repo: remotty
 
 # === v0.1.2: Completion checks ===
 - id: TASK-003
@@ -80,7 +80,7 @@ fn sync_roadmap_generates_grouped_japanese_view() -> Result<()> {
     status: backlog
     priority: P0
     target_version: v0.1.2
-    repo: codex-channels
+    repo: remotty
 "#,
     )?;
 
@@ -158,7 +158,7 @@ fn planning_paths_prefers_env_override() -> Result<()> {
     fs::write(&expected, "# existing external roadmap\n")?;
 
     let script = format!(
-        ". '{}' ; Resolve-CodexChannelsPlanningFilePath -RepoRoot '{}' -LocalRelativePath 'tasks/ROADMAP.md' -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'",
+        ". '{}' ; Resolve-RemottyPlanningFilePath -RepoRoot '{}' -LocalRelativePath 'tasks/ROADMAP.md' -EnvironmentVariable 'REMOTTY_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'",
         repo_root()
             .join("scripts")
             .join("planning-paths.ps1")
@@ -170,7 +170,7 @@ fn planning_paths_prefers_env_override() -> Result<()> {
         .arg("-NoProfile")
         .arg("-Command")
         .arg(script)
-        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .env("REMOTTY_PLANNING_ROOT", &planning_root)
         .output()
         .context("failed to run planning-paths.ps1")?;
 
@@ -195,7 +195,7 @@ fn planning_paths_prefers_mainvault_over_duplicate_vault() -> Result<()> {
         .join("iCloud~md~obsidian")
         .join("MainVault")
         .join("Projects")
-        .join("codex-channels")
+        .join("remotty")
         .join("planning");
     let duplicate_root = temp
         .path()
@@ -203,7 +203,7 @@ fn planning_paths_prefers_mainvault_over_duplicate_vault() -> Result<()> {
         .join("iCloud~md~obsidian")
         .join("A-MainVault")
         .join("Projects")
-        .join("codex-channels")
+        .join("remotty")
         .join("planning");
 
     fs::create_dir_all(&canonical_root)?;
@@ -215,7 +215,7 @@ fn planning_paths_prefers_mainvault_over_duplicate_vault() -> Result<()> {
     fs::write(duplicate_root.join("ROADMAP.md"), "# duplicate\n")?;
 
     let script = format!(
-        ". '{}' ; Get-CodexChannelsDefaultPlanningRoot",
+        ". '{}' ; Get-RemottyDefaultPlanningRoot",
         repo_root()
             .join("scripts")
             .join("planning-paths.ps1")
@@ -292,7 +292,7 @@ fn setup_planning_preserves_existing_live_files() -> Result<()> {
     let existing_backlog = planning_root.join("backlog.yaml");
     write_file(
         &existing_backlog,
-        "# === v9.9.9: Custom ===\n- id: TASK-999\n    title: Keep custom backlog\n    status: active\n    priority: P0\n    target_version: v9.9.9\n    repo: codex-channels\n",
+        "# === v9.9.9: Custom ===\n- id: TASK-999\n    title: Keep custom backlog\n    status: active\n    priority: P0\n    target_version: v9.9.9\n    repo: remotty\n",
     )?;
 
     let output = Command::new(powershell())
@@ -404,7 +404,7 @@ fn sync_roadmap_fails_when_backlog_is_missing() -> Result<()> {
         .arg("-NoProfile")
         .arg("-File")
         .arg(repo_root().join("scripts").join("sync-roadmap.ps1"))
-        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
+        .env("REMOTTY_PLANNING_ROOT", &planning_root)
         .output()
         .context("failed to run sync-roadmap.ps1 without backlog")?;
 
@@ -429,7 +429,7 @@ fn validate_planning_accepts_well_formed_inputs() -> Result<()> {
 
     write_file(
         &backlog_path,
-        "# === v0.1.1: Bootstrap patch ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: codex-channels\n",
+        "# === v0.1.1: Bootstrap patch ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: remotty\n",
     )?;
     write_file(
         &title_path,
@@ -490,7 +490,7 @@ fn validate_planning_allows_missing_title_map() -> Result<()> {
 
     write_file(
         &backlog_path,
-        "# === v0.1.1: Bootstrap patch ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: codex-channels\n",
+        "# === v0.1.1: Bootstrap patch ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: remotty\n",
     )?;
 
     let output = run_validate_planning(&backlog_path, &missing_title_path)?;
@@ -514,11 +514,11 @@ fn sync_roadmap_uses_explicit_env_overrides() -> Result<()> {
 
     write_file(
         &planning_root.join("backlog.yaml"),
-        "# === v0.1.0: Wrong ===\n- id: TASK-999\n    title: Wrong planning root\n    status: done\n    priority: P0\n    target_version: v0.1.0\n    repo: codex-channels\n",
+        "# === v0.1.0: Wrong ===\n- id: TASK-999\n    title: Wrong planning root\n    status: done\n    priority: P0\n    target_version: v0.1.0\n    repo: remotty\n",
     )?;
     write_file(
         &explicit_backlog_path,
-        "# === v0.1.1: Override ===\n- id: TASK-001\n    title: Use explicit override\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: codex-channels\n",
+        "# === v0.1.1: Override ===\n- id: TASK-001\n    title: Use explicit override\n    status: done\n    priority: P0\n    target_version: v0.1.1\n    repo: remotty\n",
     )?;
     write_file(
         &explicit_title_path,
@@ -529,10 +529,10 @@ fn sync_roadmap_uses_explicit_env_overrides() -> Result<()> {
         .arg("-NoProfile")
         .arg("-File")
         .arg(repo_root().join("scripts").join("sync-roadmap.ps1"))
-        .env("CODEX_CHANNELS_PLANNING_ROOT", &planning_root)
-        .env("CODEX_CHANNELS_BACKLOG_PATH", &explicit_backlog_path)
-        .env("CODEX_CHANNELS_ROADMAP_PATH", &explicit_roadmap_path)
-        .env("CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH", &explicit_title_path)
+        .env("REMOTTY_PLANNING_ROOT", &planning_root)
+        .env("REMOTTY_BACKLOG_PATH", &explicit_backlog_path)
+        .env("REMOTTY_ROADMAP_PATH", &explicit_roadmap_path)
+        .env("REMOTTY_ROADMAP_TITLE_JA_PATH", &explicit_title_path)
         .output()
         .context("failed to run sync-roadmap.ps1 with env override")?;
 
@@ -558,7 +558,7 @@ fn validate_planning_rejects_missing_required_backlog_fields() -> Result<()> {
 
     write_file(
         &backlog_path,
-        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    repo: codex-channels\n",
+        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    repo: remotty\n",
     )?;
     write_file(
         &title_path,
@@ -587,7 +587,7 @@ fn validate_planning_rejects_invalid_localization_file() -> Result<()> {
 
     write_file(
         &backlog_path,
-        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.0\n    repo: codex-channels\n",
+        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: done\n    priority: P0\n    target_version: v0.1.0\n    repo: remotty\n",
     )?;
     write_file(&title_path, "@{\nVersionTitles =\n")?;
 
@@ -613,7 +613,7 @@ fn validate_planning_rejects_invalid_backlog_values() -> Result<()> {
 
     write_file(
         &backlog_path,
-        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: progress\n    priority: HIGH\n    target_version: 1.0.0\n    repo: codex-channels\n\n- id: TASK-001\n    title: Add validation\n    status: active\n    priority: P1\n    target_version: v0.1.0\n    repo: codex-channels\n",
+        "# === v0.1.0: Bootstrap ===\n- id: TASK-001\n    title: Create bridge foundation\n    status: progress\n    priority: HIGH\n    target_version: 1.0.0\n    repo: remotty\n\n- id: TASK-001\n    title: Add validation\n    status: active\n    priority: P1\n    target_version: v0.1.0\n    repo: remotty\n",
     )?;
     write_file(
         &title_path,
