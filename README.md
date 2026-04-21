@@ -280,30 +280,6 @@ pwsh -NoProfile -File scripts/audit-public-surface.ps1
 pwsh -NoProfile -File scripts/audit-secret-surface.ps1
 ```
 
-### Release documentation review
-
-Every release must review the public documentation before running `scripts/bump-version.ps1`.
-The review must include `README.md` and `README.ja.md`.
-Japanese public documentation must be reviewed with `claude-opus-4-7`.
-
-For local release work, keep the review record outside the repository.
-The default local path is:
-
-```text
-%LOCALAPPDATA%\remotty\release-doc-reviews\vX.Y.Z.psd1
-```
-
-For tag-triggered GitHub releases, commit the public review record here:
-
-```text
-.github/release-doc-reviews/vX.Y.Z.psd1
-```
-
-The record must include the release tag, reviewed files, approval status, reviewer model, and short notes.
-`scripts/assert-release-doc-review.ps1` checks the record.
-`scripts/bump-version.ps1` calls that check before it creates a release branch.
-`.github/workflows/release.yml` runs the same check before publishing release assets.
-
 ### Optional manual smoke
 
 The manual smoke run is opt-in and does not run in CI.

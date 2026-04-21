@@ -60,12 +60,7 @@ function Find-RemottyPlanningRoot {
             return $null
         }
 
-        $preferred = @(
-            $candidates | Sort-Object `
-                @{ Expression = { if ($_ -match '[\\/]iCloudDrive[\\/]iCloud~md~obsidian[\\/]MainVault[\\/]Projects[\\/]remotty[\\/]planning$') { 0 } else { 1 } } }, `
-                @{ Expression = { $_.Length } }, `
-                @{ Expression = { $_ } }
-        )
+        $preferred = @($candidates | Sort-Object @{ Expression = { $_.Length } }, @{ Expression = { $_ } })
 
         if ($preferred.Count -gt 0) {
             return [string]$preferred[0]

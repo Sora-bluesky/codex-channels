@@ -267,7 +267,7 @@ $versionGroups = $tasksWithTargetVersion |
 $builder = [System.Text.StringBuilder]::new()
 [void]$builder.AppendLine('# ロードマップ')
 [void]$builder.AppendLine()
-[void]$builder.AppendLine('> planning backlog から自動生成 — 手動編集禁止')
+[void]$builder.AppendLine('> タスク定義から自動生成 — 手動編集禁止')
 [void]$builder.AppendLine(('> 最終同期: {0}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm (zzz)')))
 [void]$builder.AppendLine()
 [void]$builder.AppendLine('## バージョン概要')

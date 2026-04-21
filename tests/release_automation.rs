@@ -264,147 +264,6 @@ edition = "2024"
 }
 
 #[test]
-fn release_doc_review_gate_requires_review_file() -> Result<()> {
-    let temp = TempDir::new()?;
-    let missing_review = temp.path().join("missing-review.psd1");
-
-    let output = Command::new(powershell())
-        .arg("-NoProfile")
-        .arg("-File")
-        .arg(
-            repo_root()
-                .join("scripts")
-                .join("assert-release-doc-review.ps1"),
-        )
-        .arg("-Version")
-        .arg("0.1.18")
-        .arg("-ReviewPath")
-        .arg(&missing_review)
-        .output()
-        .context("failed to run assert-release-doc-review.ps1")?;
-
-    assert!(
-        !output.status.success(),
-        "doc review gate unexpectedly passed"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Release documentation review is required"));
-
-    Ok(())
-}
-
-#[test]
-fn release_doc_review_gate_accepts_opus_review_record() -> Result<()> {
-    let temp = TempDir::new()?;
-    let review_path = temp.path().join("v0.1.18.psd1");
-    write_file(
-        &review_path,
-        r#"@{
-    Version = "v0.1.18"
-    EnglishReviewStatus = "approved"
-    JapaneseReviewStatus = "approved"
-    JapaneseReviewerModel = "claude-opus-4-7"
-    ReviewedDocs = @("README.md", "README.ja.md", "plugins/remotty/README.md")
-    Notes = "English and Japanese public docs were reviewed before release."
-}"#,
-    )?;
-
-    let output = Command::new(powershell())
-        .arg("-NoProfile")
-        .arg("-File")
-        .arg(
-            repo_root()
-                .join("scripts")
-                .join("assert-release-doc-review.ps1"),
-        )
-        .arg("-Version")
-        .arg("v0.1.18")
-        .arg("-ReviewPath")
-        .arg(&review_path)
-        .output()
-        .context("failed to run assert-release-doc-review.ps1")?;
-
-    assert!(
-        output.status.success(),
-        "doc review gate failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    Ok(())
-}
-
-#[test]
-fn release_doc_review_gate_rejects_non_opus_japanese_review() -> Result<()> {
-    let temp = TempDir::new()?;
-    let review_path = temp.path().join("v0.1.18.psd1");
-    write_file(
-        &review_path,
-        r#"@{
-    Version = "v0.1.18"
-    EnglishReviewStatus = "approved"
-    JapaneseReviewStatus = "approved"
-    JapaneseReviewerModel = "claude-sonnet-4-5"
-    ReviewedDocs = @("README.md", "README.ja.md")
-    Notes = "Japanese docs were checked."
-}"#,
-    )?;
-
-    let output = Command::new(powershell())
-        .arg("-NoProfile")
-        .arg("-File")
-        .arg(
-            repo_root()
-                .join("scripts")
-                .join("assert-release-doc-review.ps1"),
-        )
-        .arg("-Version")
-        .arg("v0.1.18")
-        .arg("-ReviewPath")
-        .arg(&review_path)
-        .output()
-        .context("failed to run assert-release-doc-review.ps1")?;
-
-    assert!(
-        !output.status.success(),
-        "doc review gate unexpectedly accepted non-Opus review"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("claude-opus-4-7"));
-
-    Ok(())
-}
-
-#[test]
-fn release_workflow_runs_doc_review_gate_before_publishing() -> Result<()> {
-    let workflow = fs::read_to_string(
-        repo_root()
-            .join(".github")
-            .join("workflows")
-            .join("release.yml"),
-    )?;
-    let gate = "scripts/assert-release-doc-review.ps1";
-    let publish = "softprops/action-gh-release";
-
-    let gate_index = workflow
-        .find(gate)
-        .context("release workflow must run release documentation review gate")?;
-    let publish_index = workflow
-        .find(publish)
-        .context("release workflow must publish GitHub release assets")?;
-
-    assert!(
-        gate_index < publish_index,
-        "release documentation review gate must run before release publishing"
-    );
-    assert!(
-        workflow.contains(".github/release-doc-reviews/${{ github.ref_name }}.psd1"),
-        "release workflow must use the committed public review record"
-    );
-
-    Ok(())
-}
-
-#[test]
 fn bump_version_fails_when_planning_inputs_are_missing() -> Result<()> {
     let temp = TempDir::new()?;
     let planning_root = temp.path().join("planning-root");
@@ -445,6 +304,67 @@ edition = "2024"
 
     let cargo_toml = fs::read_to_string(&cargo_toml_path)?;
     assert!(cargo_toml.contains("version = \"0.1.0\""));
+
+    Ok(())
+}
+
+#[test]
+fn release_workflow_runs_public_audits_before_publishing() -> Result<()> {
+    let workflow = fs::read_to_string(
+        repo_root()
+            .join(".github")
+            .join("workflows")
+            .join("release.yml"),
+    )?;
+    let audit_step = workflow
+        .find("Run public release audits")
+        .context("release workflow should run public release audits")?;
+    let prepare_step = workflow
+        .find("Prepare release assets")
+        .context("release workflow should prepare release assets")?;
+    let publish_step = workflow
+        .find("Publish release")
+        .context("release workflow should publish release")?;
+
+    assert!(audit_step < prepare_step);
+    assert!(prepare_step < publish_step);
+    for script in [
+        "./scripts/audit-public-surface.ps1",
+        "./scripts/audit-doc-terminology.ps1",
+        "./scripts/audit-secret-surface.ps1",
+    ] {
+        assert!(
+            workflow.contains(script),
+            "missing release audit script: {script}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn bump_version_runs_public_audits_before_release_workflow() -> Result<()> {
+    let script = fs::read_to_string(repo_root().join("scripts").join("bump-version.ps1"))?;
+    let planning_validation = script
+        .find("& $validatePlanningScript")
+        .context("bump-version should validate planning inputs")?;
+    let public_audit = script
+        .find("& $auditPublicSurfaceScript")
+        .context("bump-version should run public surface audit")?;
+    let doc_audit = script
+        .find("& $auditDocTerminologyScript")
+        .context("bump-version should run documentation terminology audit")?;
+    let secret_audit = script
+        .find("& $auditSecretSurfaceScript")
+        .context("bump-version should run secret surface audit")?;
+    let git_branch = script
+        .find("git switch -c $branch")
+        .context("bump-version should create release branch")?;
+
+    assert!(planning_validation < public_audit);
+    assert!(public_audit < doc_audit);
+    assert!(doc_audit < secret_audit);
+    assert!(secret_audit < git_branch);
 
     Ok(())
 }

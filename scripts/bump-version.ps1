@@ -16,7 +16,9 @@ $cargoTomlPath = Join-Path $resolvedRepoRoot 'Cargo.toml'
 $syncRoadmapScript = Join-Path $PSScriptRoot 'sync-roadmap.ps1'
 $generateNotesScript = Join-Path $PSScriptRoot 'generate-release-notes.ps1'
 $validatePlanningScript = Join-Path $PSScriptRoot 'validate-planning.ps1'
-$assertReleaseDocReviewScript = Join-Path $PSScriptRoot 'assert-release-doc-review.ps1'
+$auditPublicSurfaceScript = Join-Path $PSScriptRoot 'audit-public-surface.ps1'
+$auditDocTerminologyScript = Join-Path $PSScriptRoot 'audit-doc-terminology.ps1'
+$auditSecretSurfaceScript = Join-Path $PSScriptRoot 'audit-secret-surface.ps1'
 $backlogPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
 $roadmapPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
 $titlePath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
@@ -35,7 +37,14 @@ $tag = Get-ReleaseTag -Version $normalizedVersion
 if (-not $SyncOnly) {
     Assert-ReleasePlanningInputsExist -BacklogPath $backlogPath -RoadmapTitleJaPath $titlePath
     & $validatePlanningScript -BacklogPath $backlogPath -RoadmapTitleJaPath $titlePath | Out-Null
-    & $assertReleaseDocReviewScript -Version $normalizedVersion | Out-Null
+    Push-Location $resolvedRepoRoot
+    try {
+        & $auditPublicSurfaceScript | Out-Null
+        & $auditDocTerminologyScript | Out-Null
+        & $auditSecretSurfaceScript | Out-Null
+    } finally {
+        Pop-Location
+    }
 }
 
 [System.IO.File]::WriteAllText($versionFile, $normalizedVersion, [System.Text.UTF8Encoding]::new($false))

@@ -187,32 +187,24 @@ fn planning_paths_prefers_env_override() -> Result<()> {
 }
 
 #[test]
-fn planning_paths_prefers_mainvault_over_duplicate_vault() -> Result<()> {
+fn planning_paths_prefers_shortest_matching_root() -> Result<()> {
     let temp = TempDir::new()?;
-    let canonical_root = temp
-        .path()
-        .join("iCloudDrive")
-        .join("iCloud~md~obsidian")
-        .join("MainVault")
-        .join("Projects")
-        .join("remotty")
-        .join("planning");
+    let preferred_root = temp.path().join("project").join("remotty").join("planning");
     let duplicate_root = temp
         .path()
-        .join("iCloudDrive")
-        .join("iCloud~md~obsidian")
-        .join("A-MainVault")
-        .join("Projects")
+        .join("very")
+        .join("deep")
+        .join("project")
         .join("remotty")
         .join("planning");
 
-    fs::create_dir_all(&canonical_root)?;
+    fs::create_dir_all(&preferred_root)?;
     fs::create_dir_all(&duplicate_root)?;
-    fs::write(canonical_root.join("backlog.yaml"), "- id: TASK-001\n")?;
-    fs::write(canonical_root.join("ROADMAP.md"), "# canonical\n")?;
-    fs::write(canonical_root.join("roadmap-title-ja.psd1"), "@{\n}\n")?;
-    fs::write(duplicate_root.join("backlog.yaml"), "- id: TASK-002\n")?;
-    fs::write(duplicate_root.join("ROADMAP.md"), "# duplicate\n")?;
+    for root in [&preferred_root, &duplicate_root] {
+        fs::write(root.join("backlog.yaml"), "- id: TASK-001\n")?;
+        fs::write(root.join("ROADMAP.md"), "# roadmap\n")?;
+        fs::write(root.join("roadmap-title-ja.psd1"), "@{\n}\n")?;
+    }
 
     let script = format!(
         ". '{}' ; Get-RemottyDefaultPlanningRoot",
@@ -238,7 +230,7 @@ fn planning_paths_prefers_mainvault_over_duplicate_vault() -> Result<()> {
     );
 
     let resolved = fs::canonicalize(String::from_utf8(output.stdout)?.trim())?;
-    let expected = fs::canonicalize(&canonical_root)?;
+    let expected = fs::canonicalize(&preferred_root)?;
     assert_eq!(resolved, expected);
 
     Ok(())
@@ -277,7 +269,7 @@ fn setup_planning_creates_live_files_and_marker() -> Result<()> {
 
     let roadmap = fs::read_to_string(planning_root.join("ROADMAP.md"))?;
     assert!(roadmap.contains("# ロードマップ"));
-    assert!(roadmap.contains("最初の内部マイルストーンを定義する"));
+    assert!(roadmap.contains("初期マイルストーンを定義する"));
 
     Ok(())
 }
