@@ -264,30 +264,6 @@ pwsh -NoProfile -File scripts/audit-public-surface.ps1
 pwsh -NoProfile -File scripts/audit-secret-surface.ps1
 ```
 
-### リリース前の公開文書レビュー
-
-リリースごとに、公開ドキュメントを必ずレビューします。
-対象には `README.md` と `README.ja.md` を含めます。
-日本語の公開ドキュメントは、必ず `claude-opus-4-7` でレビューしてください。
-
-ローカルでリリース作業をする時は、レビュー記録をリポジトリ外に置きます。
-既定のローカルパスは次です。
-
-```text
-%LOCALAPPDATA%\remotty\release-doc-reviews\vX.Y.Z.psd1
-```
-
-タグで起動する GitHub Releases では、公開レビュー記録を次の場所にコミットします。
-
-```text
-.github/release-doc-reviews/vX.Y.Z.psd1
-```
-
-記録には、リリースタグ、レビューしたファイル、承認状態、レビューモデル、短いメモを書きます。
-`scripts/assert-release-doc-review.ps1` が、その記録を確認します。
-`scripts/bump-version.ps1` は、リリースブランチを作る前にこの確認を実行します。
-`.github/workflows/release.yml` は、リリースファイルを公開する前に同じ確認を実行します。
-
 ### 任意の手動スモーク
 
 手動スモークは任意です。CI では動きません。

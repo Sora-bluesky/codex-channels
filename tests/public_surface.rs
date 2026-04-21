@@ -190,6 +190,49 @@ fn secret_surface_audit_rejects_telegram_bot_urls_with_embedded_tokens() -> Resu
 }
 
 #[test]
+fn doc_terminology_audit_rejects_release_history_terms() -> Result<()> {
+    let repo = tempdir()?;
+    initialize_git_repo(repo.path())?;
+    let script_path = repo.path().join("audit-doc-terminology.ps1");
+    std::fs::copy(
+        repo_root()
+            .join("scripts")
+            .join("audit-doc-terminology.ps1"),
+        &script_path,
+    )?;
+    std::fs::create_dir_all(repo.path().join("scripts"))?;
+    std::fs::write(
+        repo.path().join("scripts").join("release-history.psd1"),
+        r#"@{
+    Releases = @(
+        @{
+            Version = "0.1.0"
+            Notes = @("Reviewed by claude-opus before release.")
+        }
+    )
+}
+"#,
+    )?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(&script_path)
+        .current_dir(repo.path())
+        .output()
+        .with_context(|| format!("failed to run {}", script_path.display()))?;
+
+    assert!(
+        !output.status.success(),
+        "audit-doc-terminology should reject release history terminology"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("scripts/release-history.psd1 contains banned term 'claude-opus'"));
+
+    Ok(())
+}
+
+#[test]
 fn live_planning_files_and_task_contents_stay_untracked() -> Result<()> {
     let output = Command::new("git")
         .args(["ls-files"])
@@ -204,12 +247,13 @@ fn live_planning_files_and_task_contents_stay_untracked() -> Result<()> {
     );
 
     let tracked = String::from_utf8(output.stdout)?;
-    assert!(tracked.contains("tasks/README.md"));
+    assert!(!tracked.contains("tasks/README.md"));
     assert!(!tracked.contains("tasks/backlog.example.yaml"));
     assert!(!tracked.contains("tasks/roadmap-title-ja.example.psd1"));
     assert!(!tracked.contains("tasks/ROADMAP.example.md"));
     assert!(!tracked.contains("tasks/backlog.yaml"));
     assert!(!tracked.contains("tasks/roadmap-title-ja.psd1"));
+    assert!(!tracked.contains(".github/release-doc-reviews/"));
     assert!(!tracked.contains("docs/project/ROADMAP.md"));
 
     Ok(())
@@ -236,7 +280,6 @@ fn public_surface_audit_rejects_live_planning_files_present_in_repo() -> Result<
     std::fs::create_dir_all(repo.path().join("scripts"))?;
     for script in [
         "audit-doc-terminology.ps1",
-        "assert-release-doc-review.ps1",
         "audit-secret-surface.ps1",
         "planning-paths.ps1",
         "setup-planning.ps1",
@@ -249,9 +292,7 @@ fn public_surface_audit_rejects_live_planning_files_present_in_repo() -> Result<
         )?;
     }
     for tracked_path in [
-        "tasks/README.md",
         "scripts/audit-doc-terminology.ps1",
-        "scripts/assert-release-doc-review.ps1",
         "scripts/audit-secret-surface.ps1",
         "scripts/planning-paths.ps1",
         "scripts/setup-planning.ps1",
@@ -300,7 +341,6 @@ fn public_surface_audit_rejects_unexpected_tracked_task_files() -> Result<()> {
     std::fs::create_dir_all(repo.path().join("scripts"))?;
     for script in [
         "audit-doc-terminology.ps1",
-        "assert-release-doc-review.ps1",
         "audit-secret-surface.ps1",
         "planning-paths.ps1",
         "setup-planning.ps1",
@@ -313,10 +353,8 @@ fn public_surface_audit_rejects_unexpected_tracked_task_files() -> Result<()> {
         )?;
     }
     for tracked_path in [
-        "tasks/README.md",
         "tasks/notes.md",
         "scripts/audit-doc-terminology.ps1",
-        "scripts/assert-release-doc-review.ps1",
         "scripts/audit-secret-surface.ps1",
         "scripts/planning-paths.ps1",
         "scripts/setup-planning.ps1",
@@ -345,6 +383,67 @@ fn public_surface_audit_rejects_unexpected_tracked_task_files() -> Result<()> {
 }
 
 #[test]
+fn public_surface_audit_rejects_release_doc_review_records() -> Result<()> {
+    let repo = tempdir()?;
+    initialize_git_repo(repo.path())?;
+    let script_path = repo.path().join("audit-public-surface.ps1");
+    std::fs::copy(
+        repo_root().join("scripts").join("audit-public-surface.ps1"),
+        &script_path,
+    )?;
+    std::fs::create_dir_all(repo.path().join(".github").join("release-doc-reviews"))?;
+    std::fs::write(
+        repo.path()
+            .join(".github")
+            .join("release-doc-reviews")
+            .join("v0.1.0.psd1"),
+        "@{ Reviewed = $true }\n",
+    )?;
+    std::fs::create_dir_all(repo.path().join("scripts"))?;
+    for script in [
+        "audit-doc-terminology.ps1",
+        "audit-secret-surface.ps1",
+        "planning-paths.ps1",
+        "setup-planning.ps1",
+        "sync-roadmap.ps1",
+        "validate-planning.ps1",
+    ] {
+        std::fs::copy(
+            repo_root().join("scripts").join(script),
+            repo.path().join("scripts").join(script),
+        )?;
+    }
+    for tracked_path in [
+        ".github/release-doc-reviews/v0.1.0.psd1",
+        "scripts/audit-doc-terminology.ps1",
+        "scripts/audit-secret-surface.ps1",
+        "scripts/planning-paths.ps1",
+        "scripts/setup-planning.ps1",
+        "scripts/sync-roadmap.ps1",
+        "scripts/validate-planning.ps1",
+    ] {
+        git_add(repo.path(), tracked_path)?;
+    }
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(&script_path)
+        .current_dir(repo.path())
+        .output()
+        .with_context(|| format!("failed to run {}", script_path.display()))?;
+
+    assert!(
+        !output.status.success(),
+        "audit-public-surface should reject release doc review records"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("forbidden tracked file: .github/release-doc-reviews"));
+
+    Ok(())
+}
+
+#[test]
 fn public_surface_audit_rejects_live_planning_files_anywhere_in_repo() -> Result<()> {
     let repo = tempdir()?;
     initialize_git_repo(repo.path())?;
@@ -366,7 +465,6 @@ fn public_surface_audit_rejects_live_planning_files_anywhere_in_repo() -> Result
     std::fs::create_dir_all(repo.path().join("scripts"))?;
     for script in [
         "audit-doc-terminology.ps1",
-        "assert-release-doc-review.ps1",
         "audit-secret-surface.ps1",
         "planning-paths.ps1",
         "setup-planning.ps1",
@@ -379,9 +477,7 @@ fn public_surface_audit_rejects_live_planning_files_anywhere_in_repo() -> Result
         )?;
     }
     for tracked_path in [
-        "tasks/README.md",
         "scripts/audit-doc-terminology.ps1",
-        "scripts/assert-release-doc-review.ps1",
         "scripts/audit-secret-surface.ps1",
         "scripts/planning-paths.ps1",
         "scripts/setup-planning.ps1",

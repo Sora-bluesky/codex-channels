@@ -63,9 +63,12 @@ jobs:
       - name: Install PowerShell
         run: sudo apt-get update && sudo apt-get install -y powershell
 
-      - name: Verify release documentation review
+      - name: Run public release audits
         shell: pwsh
-        run: ./scripts/assert-release-doc-review.ps1 -Version "${{ github.ref_name }}" -ReviewPath ".github/release-doc-reviews/${{ github.ref_name }}.psd1"
+        run: |
+          ./scripts/audit-public-surface.ps1
+          ./scripts/audit-doc-terminology.ps1
+          ./scripts/audit-secret-surface.ps1
 
       - name: Prepare release assets
         run: |

@@ -21,19 +21,19 @@
         @{
             Version = "0.1.2"
             Commit = "52eb8965b44b4346f0a459ab34dd9307920fd90a"
-            Title = "Planning bootstrap"
+            Title = "Repository hygiene safeguards"
             Notes = @(
-                "Added public-surface guardrails for tracked planning files."
-                "Added one-command planning setup and external roadmap generation."
+                "Added checks that keep private operational files out of published source."
+                "Improved release preparation scripts for repeatable publishing."
             )
         }
         @{
             Version = "0.1.3"
             Commit = "f45ffce75a13a214d970b5f050e8c010932b2563"
-            Title = "Planning hardening"
+            Title = "Repository hygiene hardening"
             Notes = @(
-                "Kept the planning marker stable when sync fails."
-                "Validated planning inputs and preferred the canonical Obsidian vault during root discovery."
+                "Improved validation around release preparation inputs."
+                "Reduced local-environment assumptions in repository automation."
             )
         }
         @{

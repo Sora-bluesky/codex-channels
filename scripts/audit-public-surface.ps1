@@ -28,9 +28,7 @@ $trackedFiles = Get-TrackedFiles
 $failures = New-Object System.Collections.Generic.List[string]
 
 $requiredTracked = @(
-    'tasks/README.md',
     'scripts/audit-doc-terminology.ps1',
-    'scripts/assert-release-doc-review.ps1',
     'scripts/audit-secret-surface.ps1',
     'scripts/planning-paths.ps1',
     'scripts/setup-planning.ps1',
@@ -41,6 +39,7 @@ $requiredTracked = @(
 $forbiddenTracked = @(
     'tasks/backlog.yaml',
     'tasks/roadmap-title-ja.psd1',
+    '.github/release-doc-reviews',
     'docs/project/ROADMAP.md'
 )
 
@@ -51,22 +50,22 @@ foreach ($path in $requiredTracked) {
 }
 
 foreach ($path in $forbiddenTracked) {
-    if (Test-Tracked -TrackedFiles $trackedFiles -Path $path) {
+    if ((Test-Tracked -TrackedFiles $trackedFiles -Path $path) -or
+        @($trackedFiles | Where-Object { $_ -like "$path/*" }).Count -gt 0) {
         $failures.Add("forbidden tracked file: $path") | Out-Null
     }
 }
 
 $trackedTaskFiles = @($trackedFiles | Where-Object { $_ -like 'tasks/*' })
 foreach ($path in $trackedTaskFiles) {
-    if ($path -ne 'tasks/README.md') {
-        $failures.Add("unexpected tracked task file: $path") | Out-Null
-    }
+    $failures.Add("unexpected tracked task file: $path") | Out-Null
 }
 
 $forbiddenPresent = @(
     'tasks/backlog.yaml',
     'tasks/roadmap-title-ja.psd1',
     'tasks/ROADMAP.md',
+    '.github/release-doc-reviews',
     'docs/project/ROADMAP.md'
 )
 

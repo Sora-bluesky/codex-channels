@@ -35,7 +35,7 @@ function New-RemottyBootstrapBacklog {
     return @"
 # === v0.1.0: Bootstrap ===
 - id: TASK-001
-    title: Describe the first internal milestone
+    title: Describe the first milestone
     status: backlog
     priority: P0
     target_version: v0.1.0
@@ -50,7 +50,7 @@ function New-RemottyBootstrapTitleMap {
         "v0.1.0" = "初期計画"
     }
     TaskTitles = @{
-        "TASK-001" = "最初の内部マイルストーンを定義する"
+        "TASK-001" = "初期マイルストーンを定義する"
     }
 }
 "@
