@@ -151,6 +151,17 @@
             )
         }
         @{
+            Version = "0.1.16"
+            Commit = "8d3cb74088955e5531918f89f36ca4be748dc90a"
+            Title = "Fake Telegram bridge integration tests"
+            Notes = @(
+                "Added fake Telegram integration coverage that runs the real bridge against a local Telegram-compatible test server."
+                "Verified normal message round trips through a mocked Codex executable."
+                "Covered Telegram approval callback accept and decline flows through the fake server."
+                "Kept the integration harness local-only so release checks do not require real Telegram credentials."
+            )
+        }
+        @{
             Version = "0.1.17"
             Commit = "60ab6ca122a4d9a2eb48ee3e53dd28080b310dfb"
             Title = "Manual Telegram smoke checks"
