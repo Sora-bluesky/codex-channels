@@ -292,6 +292,32 @@ function Set-CargoPackageVersion {
     [System.IO.File]::WriteAllText($CargoTomlPath, $updated, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Set-NpmPackageVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageJsonPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    if (-not (Test-Path -LiteralPath $PackageJsonPath)) {
+        return
+    }
+
+    $content = Get-Content -LiteralPath $PackageJsonPath -Raw -Encoding UTF8
+    $updated = [regex]::Replace(
+        $content,
+        '(?m)^(\s*"version"\s*:\s*")[^"]+(")',
+        ('${1}' + $Version + '${2}'),
+        1
+    )
+    if ($updated -eq $content) {
+        throw "Could not update version property in $PackageJsonPath"
+    }
+
+    [System.IO.File]::WriteAllText($PackageJsonPath, $updated, [System.Text.UTF8Encoding]::new($false))
+}
+
 function Update-ReleaseBacklogStatus {
     param(
         [Parameter(Mandatory = $true)]

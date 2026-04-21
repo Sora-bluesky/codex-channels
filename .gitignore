@@ -1,6 +1,7 @@
 /target/
 /release/
 /state/
+/bin/remotty.exe
 /.idea/
 /.vscode/
 /bridge.local.toml

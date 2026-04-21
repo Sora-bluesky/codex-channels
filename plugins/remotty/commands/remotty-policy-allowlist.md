@@ -4,9 +4,12 @@ Show the active Telegram allowlist for this repo.
 
 ## Workflow
 
-1. Work from the repo root.
-2. Run `cargo run -- telegram policy allowlist --config bridge.toml`.
+1. Work from the package or repo root that contains `bridge.toml`.
+2. Run `remotty telegram policy allowlist --config bridge.toml`.
 3. Summarize the allowed sender IDs.
+
+If the `remotty` command is unavailable in a source checkout, fall back to
+`cargo run -- telegram policy allowlist --config bridge.toml`.
 
 ## Output requirements
 

@@ -227,6 +227,7 @@ fn bump_version_sync_only_updates_version_sources() -> Result<()> {
     let temp = TempDir::new()?;
     let cargo_toml_path = temp.path().join("Cargo.toml");
     let cargo_lock_path = temp.path().join("Cargo.lock");
+    let package_json_path = temp.path().join("package.json");
     let version_path = temp.path().join("VERSION");
 
     write_file(
@@ -252,6 +253,14 @@ dependencies = [
 [[package]]
 name = "clap"
 version = "4.5.0"
+"#,
+    )?;
+    write_file(
+        &package_json_path,
+        r#"{
+  "name": "remotty",
+  "version": "0.1.0"
+}
 "#,
     )?;
     write_file(&version_path, "0.1.0")?;
@@ -280,6 +289,8 @@ version = "4.5.0"
     let cargo_lock = fs::read_to_string(&cargo_lock_path)?;
     assert!(cargo_lock.contains("name = \"remotty\"\nversion = \"0.1.8\""));
     assert!(cargo_lock.contains("name = \"clap\"\nversion = \"4.5.0\""));
+    let package_json = fs::read_to_string(&package_json_path)?;
+    assert!(package_json.contains("\"version\": \"0.1.8\""));
     assert_eq!(fs::read_to_string(&version_path)?, "0.1.8");
 
     Ok(())
@@ -397,7 +408,7 @@ fn bump_version_checks_native_release_command_failures() -> Result<()> {
 
     for command in [
         "git switch -c $branch",
-        "git add VERSION Cargo.toml Cargo.lock",
+        "git add VERSION Cargo.toml Cargo.lock package.json",
         "git commit",
         "git push -u origin $branch",
         "gh pr create",

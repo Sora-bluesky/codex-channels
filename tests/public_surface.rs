@@ -51,6 +51,33 @@ fn gitleaks_workflow_keeps_ci_secret_scan_enabled() -> Result<()> {
 }
 
 #[test]
+fn npm_package_keeps_binary_install_contract() -> Result<()> {
+    let package = std::fs::read_to_string(repo_root().join("package.json"))?;
+    let installer = std::fs::read_to_string(repo_root().join("npm").join("install.js"))?;
+    let wrapper = std::fs::read_to_string(repo_root().join("bin").join("remotty.js"))?;
+    let release_workflow = std::fs::read_to_string(
+        repo_root()
+            .join(".github")
+            .join("workflows")
+            .join("release.yml"),
+    )?;
+
+    assert!(package.contains(r#""postinstall": "node npm/install.js""#));
+    assert!(package.contains(r#""remotty": "bin/remotty.js""#));
+    assert!(package.contains(r#""bridge.toml""#));
+    assert!(package.contains(r#""plugins/""#));
+    assert!(package.contains(r#"".agents/""#));
+    assert!(installer.contains("remotty-x64.exe"));
+    assert!(installer.contains("remotty-arm64.exe"));
+    assert!(installer.contains("releases/download"));
+    assert!(wrapper.contains("remotty.exe"));
+    assert!(release_workflow.contains("actions/setup-node@v4"));
+    assert!(release_workflow.contains("npm pack --pack-destination release"));
+
+    Ok(())
+}
+
+#[test]
 fn public_surface_audit_script_succeeds_for_tracked_repo_state() -> Result<()> {
     let script_path = repo_root().join("scripts").join("audit-public-surface.ps1");
     let output = Command::new(powershell())
