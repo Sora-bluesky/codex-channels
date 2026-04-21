@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
-function Test-CodexChannelsPathInsideRoot {
+function Test-RemottyPathInsideRoot {
     param(
         [Parameter(Mandatory = $true)]
         [string]$RootPath,
@@ -31,7 +31,7 @@ function Test-CodexChannelsPathInsideRoot {
         $resolvedCandidate.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function New-CodexChannelsBootstrapBacklog {
+function New-RemottyBootstrapBacklog {
     return @"
 # === v0.1.0: Bootstrap ===
 - id: TASK-001
@@ -39,11 +39,11 @@ function New-CodexChannelsBootstrapBacklog {
     status: backlog
     priority: P0
     target_version: v0.1.0
-    repo: codex-channels
+    repo: remotty
 "@
 }
 
-function New-CodexChannelsBootstrapTitleMap {
+function New-RemottyBootstrapTitleMap {
     return @"
 @{
     VersionTitles = @{
@@ -57,17 +57,17 @@ function New-CodexChannelsBootstrapTitleMap {
 }
 
 if ([string]::IsNullOrWhiteSpace($PlanningRoot)) {
-    $PlanningRoot = Get-CodexChannelsPlanningRoot
+    $PlanningRoot = Get-RemottyPlanningRoot
 }
 
 if ([string]::IsNullOrWhiteSpace($MarkerPath)) {
-    $MarkerPath = Get-CodexChannelsPlanningRootMarkerPath
+    $MarkerPath = Get-RemottyPlanningRootMarkerPath
 }
 
 $resolvedPlanningRoot = if ([System.IO.Path]::IsPathRooted($PlanningRoot)) { $PlanningRoot } else { Join-Path (Get-Location).Path $PlanningRoot }
 $resolvedMarkerPath = if ([System.IO.Path]::IsPathRooted($MarkerPath)) { $MarkerPath } else { Join-Path (Get-Location).Path $MarkerPath }
 
-if (Test-CodexChannelsPathInsideRoot -RootPath $repoRoot -CandidatePath $resolvedPlanningRoot) {
+if (Test-RemottyPathInsideRoot -RootPath $repoRoot -CandidatePath $resolvedPlanningRoot) {
     throw "Planning root must stay outside the repository: $resolvedPlanningRoot"
 }
 
@@ -78,14 +78,14 @@ $titleTarget = Join-Path $resolvedPlanningRoot 'roadmap-title-ja.psd1'
 $backlogAlreadyExists = Test-Path -LiteralPath $backlogTarget
 
 if (-not $backlogAlreadyExists) {
-    [System.IO.File]::WriteAllText($backlogTarget, (New-CodexChannelsBootstrapBacklog), $utf8NoBom)
+    [System.IO.File]::WriteAllText($backlogTarget, (New-RemottyBootstrapBacklog), $utf8NoBom)
 }
 
 if (-not (Test-Path -LiteralPath $titleTarget)) {
     if ($backlogAlreadyExists) {
         [System.IO.File]::WriteAllText($titleTarget, "@{`n    VersionTitles = @{} `n    TaskTitles = @{} `n}`n", $utf8NoBom)
     } else {
-        [System.IO.File]::WriteAllText($titleTarget, (New-CodexChannelsBootstrapTitleMap), $utf8NoBom)
+        [System.IO.File]::WriteAllText($titleTarget, (New-RemottyBootstrapTitleMap), $utf8NoBom)
     }
 }
 

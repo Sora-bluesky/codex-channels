@@ -4,7 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Resolve-CodexChannelsRepoRoot {
+function Resolve-RemottyRepoRoot {
     param(
         [string]$RepoRoot = ''
     )
@@ -16,7 +16,7 @@ function Resolve-CodexChannelsRepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 }
 
-function Resolve-CodexChannelsScriptPath {
+function Resolve-RemottyScriptPath {
     param(
         [Parameter(Mandatory = $true)]
         [string]$RepoRoot,

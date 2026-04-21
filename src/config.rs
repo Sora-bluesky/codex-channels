@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use reqwest::Url;
 use serde::Deserialize;
 
 #[path = "checks.rs"]
@@ -39,6 +40,10 @@ pub struct TelegramConfig {
     pub token_secret_ref: String,
     pub allowed_chat_types: Vec<String>,
     pub admin_sender_ids: Vec<i64>,
+    #[serde(default = "default_telegram_api_base_url")]
+    pub api_base_url: String,
+    #[serde(default = "default_telegram_file_base_url")]
+    pub file_base_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -137,6 +142,14 @@ fn default_max_turns_limit() -> i64 {
     DEFAULT_MAX_TURNS_BUDGET
 }
 
+fn default_telegram_api_base_url() -> String {
+    "https://api.telegram.org".to_owned()
+}
+
+fn default_telegram_file_base_url() -> String {
+    "https://api.telegram.org/file".to_owned()
+}
+
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -148,9 +161,14 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.telegram.admin_sender_ids.is_empty() {
-            bail!("telegram.admin_sender_ids must not be empty");
+        if self.telegram.api_base_url.trim().is_empty() {
+            bail!("telegram.api_base_url must not be empty");
         }
+        if self.telegram.file_base_url.trim().is_empty() {
+            bail!("telegram.file_base_url must not be empty");
+        }
+        validate_telegram_api_base_url(&self.telegram.api_base_url)?;
+        validate_telegram_file_base_url(&self.telegram.file_base_url)?;
         if let Some(profile) = self.codex.profile.as_deref() {
             if profile.trim().is_empty() {
                 bail!("codex.profile must not be blank");
@@ -214,4 +232,60 @@ impl Config {
             .iter()
             .find(|workspace| workspace.id == workspace_id)
     }
+}
+
+fn validate_telegram_api_base_url(value: &str) -> Result<()> {
+    let field_name = "telegram.api_base_url";
+    let url = Url::parse(value).with_context(|| format!("{field_name} must be a valid URL"))?;
+    let Some(host) = url.host_str() else {
+        bail!("{field_name} must include a host");
+    };
+    let scheme = url.scheme();
+    let is_official = scheme == "https"
+        && host.eq_ignore_ascii_case("api.telegram.org")
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none();
+    let is_local = matches!(host, "localhost" | "127.0.0.1" | "::1")
+        && matches!(scheme, "http" | "https")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none();
+    if !is_official && !is_local {
+        bail!("{field_name} must point to `https://api.telegram.org` or a localhost test server");
+    }
+    Ok(())
+}
+
+fn validate_telegram_file_base_url(value: &str) -> Result<()> {
+    let field_name = "telegram.file_base_url";
+    let url = Url::parse(value).with_context(|| format!("{field_name} must be a valid URL"))?;
+    let Some(host) = url.host_str() else {
+        bail!("{field_name} must include a host");
+    };
+    let scheme = url.scheme();
+    let is_official = scheme == "https"
+        && host.eq_ignore_ascii_case("api.telegram.org")
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(url.path(), "/file" | "/file/")
+        && url.query().is_none()
+        && url.fragment().is_none();
+    let is_local = matches!(host, "localhost" | "127.0.0.1" | "::1")
+        && matches!(scheme, "http" | "https")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(url.path(), "/file" | "/file/")
+        && url.query().is_none()
+        && url.fragment().is_none();
+    if !is_official && !is_local {
+        bail!("{field_name} must point to `https://api.telegram.org` or a localhost test server");
+    }
+    Ok(())
 }

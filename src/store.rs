@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params, types::Type};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter, types::Type};
 use uuid::Uuid;
 
 use crate::config::LaneMode;
@@ -52,6 +52,7 @@ pub struct AuthorizedSender {
     pub display_name: Option<String>,
     pub status: String,
     pub approved_at_ms: i64,
+    pub source: String,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +223,14 @@ impl Store {
         Ok(store)
     }
 
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .context("failed to open sqlite database read-only")?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
     pub fn migrate(&self) -> Result<()> {
         let sql = r#"
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -234,7 +243,8 @@ impl Store {
                 platform TEXT NOT NULL,
                 display_name TEXT,
                 status TEXT NOT NULL,
-                approved_at_ms INTEGER NOT NULL
+                approved_at_ms INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'paired'
             );
 
             CREATE TABLE IF NOT EXISTS lanes (
@@ -291,6 +301,18 @@ impl Store {
                 "approval_request_count",
                 "ALTER TABLE runs ADD COLUMN approval_request_count INTEGER NOT NULL DEFAULT 0",
             )?;
+            let added_authorized_sender_source = ensure_column_exists(
+                conn,
+                "authorized_senders",
+                "source",
+                "ALTER TABLE authorized_senders ADD COLUMN source TEXT NOT NULL DEFAULT 'paired'",
+            )?;
+            if added_authorized_sender_source {
+                conn.execute(
+                    "UPDATE authorized_senders SET source = 'config' WHERE source = 'paired'",
+                    [],
+                )?;
+            }
             ensure_column_exists(
                 conn,
                 "runs",
@@ -366,13 +388,18 @@ impl Store {
         self.with_conn(|conn| {
             conn.execute(
                 r#"
-                INSERT INTO authorized_senders(sender_id, platform, display_name, status, approved_at_ms)
-                VALUES (?1, ?2, ?3, ?4, ?5)
+                INSERT INTO authorized_senders(sender_id, platform, display_name, status, approved_at_ms, source)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ON CONFLICT(sender_id) DO UPDATE SET
                     platform = excluded.platform,
                     display_name = excluded.display_name,
                     status = excluded.status,
-                    approved_at_ms = excluded.approved_at_ms
+                    approved_at_ms = excluded.approved_at_ms,
+                    source = CASE
+                        WHEN authorized_senders.source = 'paired' AND excluded.source = 'config'
+                            THEN authorized_senders.source
+                        ELSE excluded.source
+                    END
                 "#,
                 params![
                     sender.sender_id,
@@ -380,8 +407,43 @@ impl Store {
                     sender.display_name,
                     sender.status,
                     sender.approved_at_ms,
+                    sender.source,
                 ],
             )
+        })?;
+        Ok(())
+    }
+
+    pub fn sync_config_authorized_senders(&self, sender_ids: &[i64]) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
+        for sender_id in sender_ids {
+            self.upsert_authorized_sender(AuthorizedSender {
+                sender_id: *sender_id,
+                platform: "telegram".to_owned(),
+                display_name: None,
+                status: "active".to_owned(),
+                approved_at_ms: now,
+                source: "config".to_owned(),
+            })?;
+        }
+
+        self.with_conn(|conn| {
+            if sender_ids.is_empty() {
+                conn.execute(
+                    "UPDATE authorized_senders SET status = 'inactive' WHERE source = 'config'",
+                    [],
+                )?;
+            } else {
+                let placeholders = (1..=sender_ids.len())
+                    .map(|index| format!("?{index}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let sql = format!(
+                    "UPDATE authorized_senders SET status = 'inactive' WHERE source = 'config' AND sender_id NOT IN ({placeholders})"
+                );
+                conn.execute(&sql, params_from_iter(sender_ids.iter()))?;
+            }
+            Ok(())
         })?;
         Ok(())
     }
@@ -396,6 +458,62 @@ impl Store {
             .optional()
         })?;
         Ok(found.is_some())
+    }
+
+    pub fn active_authorized_sender(&self, sender_id: i64) -> Result<Option<AuthorizedSender>> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                r#"
+                SELECT sender_id, platform, display_name, status, approved_at_ms, source
+                FROM authorized_senders
+                WHERE sender_id = ?1 AND status = 'active'
+                "#,
+                params![sender_id],
+                |row| {
+                    Ok(AuthorizedSender {
+                        sender_id: row.get(0)?,
+                        platform: row.get(1)?,
+                        display_name: row.get(2)?,
+                        status: row.get(3)?,
+                        approved_at_ms: row.get(4)?,
+                        source: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+        })
+        .map_err(Into::into)
+    }
+
+    pub fn list_active_authorized_senders(&self) -> Result<Vec<AuthorizedSender>> {
+        self.with_conn(|conn| {
+            let source_expr = if column_exists(conn, "authorized_senders", "source")? {
+                "source"
+            } else {
+                "'paired'"
+            };
+            let sql = format!(
+                r#"
+                SELECT sender_id, platform, display_name, status, approved_at_ms, {source_expr}
+                FROM authorized_senders
+                WHERE status = 'active'
+                ORDER BY approved_at_ms ASC, sender_id ASC
+                "#
+            );
+            let mut statement = conn.prepare(&sql)?;
+            let rows = statement.query_map([], |row| {
+                Ok(AuthorizedSender {
+                    sender_id: row.get(0)?,
+                    platform: row.get(1)?,
+                    display_name: row.get(2)?,
+                    status: row.get(3)?,
+                    approved_at_ms: row.get(4)?,
+                    source: row.get(5)?,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(Into::into)
     }
 
     pub fn insert_seen_update(
@@ -1615,17 +1733,23 @@ fn ensure_column_exists(
     table_name: &str,
     column_name: &str,
     alter_sql: &str,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<bool> {
+    let exists = column_exists(conn, table_name, column_name)?;
+    if !exists {
+        conn.execute_batch(alter_sql)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> rusqlite::Result<bool> {
     let mut statement = conn.prepare(&format!("PRAGMA table_info({table_name})"))?;
     let exists = statement
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
         .any(|existing| existing == column_name);
-    if !exists {
-        conn.execute_batch(alter_sql)?;
-    }
-    Ok(())
+    Ok(exists)
 }
 
 fn mode_to_str(mode: LaneMode) -> &'static str {
@@ -1657,6 +1781,107 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let store = Store::open(dir.path().join("store.db")).expect("store");
         (dir, store)
+    }
+
+    #[test]
+    fn sync_config_authorized_senders_revokes_removed_config_sender() {
+        let (_dir, store) = temp_store();
+
+        store
+            .sync_config_authorized_senders(&[11, 22])
+            .expect("initial config sync");
+        assert!(store.is_authorized_sender(11).expect("sender 11 lookup"));
+        assert!(store.is_authorized_sender(22).expect("sender 22 lookup"));
+
+        store
+            .sync_config_authorized_senders(&[22])
+            .expect("second config sync");
+        assert!(!store.is_authorized_sender(11).expect("sender 11 lookup"));
+        assert!(store.is_authorized_sender(22).expect("sender 22 lookup"));
+    }
+
+    #[test]
+    fn sync_config_authorized_senders_keeps_sender_that_was_repaired_as_paired() {
+        let (_dir, store) = temp_store();
+
+        store
+            .sync_config_authorized_senders(&[11])
+            .expect("initial config sync");
+        store
+            .upsert_authorized_sender(AuthorizedSender {
+                sender_id: 11,
+                platform: "telegram".to_owned(),
+                display_name: None,
+                status: "active".to_owned(),
+                approved_at_ms: Utc::now().timestamp_millis(),
+                source: "paired".to_owned(),
+            })
+            .expect("pair sender");
+
+        store
+            .sync_config_authorized_senders(&[])
+            .expect("remove config sender");
+        assert!(store.is_authorized_sender(11).expect("sender 11 lookup"));
+    }
+
+    #[test]
+    fn migrate_marks_legacy_authorized_senders_as_config_backed() {
+        let dir = tempdir().expect("temp dir");
+        let db_path = dir.path().join("legacy.db");
+        let conn = Connection::open(&db_path).expect("legacy connection");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE authorized_senders (
+                sender_id INTEGER PRIMARY KEY,
+                platform TEXT NOT NULL,
+                display_name TEXT,
+                status TEXT NOT NULL,
+                approved_at_ms INTEGER NOT NULL
+            );
+            INSERT INTO authorized_senders(sender_id, platform, display_name, status, approved_at_ms)
+            VALUES (11, 'telegram', NULL, 'active', 1);
+            "#,
+        )
+        .expect("seed legacy schema");
+        drop(conn);
+
+        let store = Store::open(&db_path).expect("migrated store");
+        let sender = store
+            .list_active_authorized_senders()
+            .expect("list senders")
+            .into_iter()
+            .find(|sender| sender.sender_id == 11)
+            .expect("legacy sender");
+        assert_eq!(sender.source, "config");
+
+        store
+            .sync_config_authorized_senders(&[])
+            .expect("sync empty config");
+        assert!(!store.is_authorized_sender(11).expect("sender lookup"));
+    }
+
+    #[test]
+    fn active_authorized_sender_returns_metadata_for_paired_sender() {
+        let (_dir, store) = temp_store();
+        let now = Utc::now().timestamp_millis();
+        store
+            .upsert_authorized_sender(AuthorizedSender {
+                sender_id: 33,
+                platform: "telegram".to_owned(),
+                display_name: Some("paired".to_owned()),
+                status: "active".to_owned(),
+                approved_at_ms: now,
+                source: "paired".to_owned(),
+            })
+            .expect("pair sender");
+
+        let sender = store
+            .active_authorized_sender(33)
+            .expect("sender lookup")
+            .expect("paired sender");
+        assert_eq!(sender.sender_id, 33);
+        assert_eq!(sender.source, "paired");
+        assert_eq!(sender.display_name.as_deref(), Some("paired"));
     }
 
     #[test]

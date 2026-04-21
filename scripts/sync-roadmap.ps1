@@ -227,13 +227,13 @@ function New-ProgressBar {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if ([string]::IsNullOrWhiteSpace($BacklogPath)) {
-    $BacklogPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
+    $BacklogPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
 }
 if ([string]::IsNullOrWhiteSpace($RoadmapPath)) {
-    $RoadmapPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
+    $RoadmapPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_ROADMAP_PATH' -DefaultFileName 'ROADMAP.md'
 }
 if ([string]::IsNullOrWhiteSpace($RoadmapTitleJaPath)) {
-    $RoadmapTitleJaPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
+    $RoadmapTitleJaPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_ROADMAP_TITLE_JA_PATH' -DefaultFileName 'roadmap-title-ja.psd1'
 }
 
 $resolvedBacklogPath = Resolve-WorkspacePath -Path $BacklogPath

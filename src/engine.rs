@@ -9,13 +9,13 @@ use crate::config::{
     CodexTransport, Config, LaneMode, checks::CheckRunSummary, checks::run_profile,
 };
 use crate::store::{
-    ApprovalRequestStatus, ApprovalRequestTransport, AuthorizedSender, LaneRecord, LaneState,
-    NewRun, Store,
+    ApprovalRequestStatus, ApprovalRequestTransport, LaneRecord, LaneState, NewRun, Store,
 };
 use crate::telegram::{
     IncomingMessage, SavedTelegramAttachment, TelegramAttachmentKind, TelegramClient,
     TelegramControlCommand,
 };
+use crate::telegram_poller_guard::TelegramPollerGuard;
 use crate::windows_secret::load_secret;
 
 const MAX_COMPLETION_REPAIR_TURNS: usize = 2;
@@ -140,7 +140,13 @@ pub async fn run_with_shutdown(config: Config, shutdown: CancellationToken) -> R
         ));
     }
 
-    let telegram = TelegramClient::new(token);
+    let telegram = TelegramClient::with_base_urls(
+        token,
+        config.telegram.api_base_url.clone(),
+        config.telegram.file_base_url.clone(),
+    );
+    let bot = telegram.get_me().await?;
+    let _poller_guard = TelegramPollerGuard::acquire(bot.id)?;
     let store = Store::open(&config.storage.db_path)?;
     seed_admin_senders(&store, &config.telegram.admin_sender_ids)?;
     let codex = CodexRunner::new(config.codex.clone());
@@ -177,12 +183,8 @@ pub async fn run_with_shutdown(config: Config, shutdown: CancellationToken) -> R
                 continue;
             }
 
-            let sender_id = match update.sender_id {
-                Some(sender_id) if store.is_authorized_sender(sender_id)? => sender_id,
-                Some(sender_id) => {
-                    warn!("rejected unauthorized sender: {sender_id}");
-                    continue;
-                }
+            let sender_id = match authorize_sender_for_update(&store, &update)? {
+                Some(sender_id) => sender_id,
                 None => continue,
             };
 
@@ -1767,16 +1769,28 @@ fn lane_state_name(state: LaneState) -> &'static str {
 }
 
 fn seed_admin_senders(store: &Store, sender_ids: &[i64]) -> Result<()> {
-    for sender_id in sender_ids {
-        store.upsert_authorized_sender(AuthorizedSender {
-            sender_id: *sender_id,
-            platform: "telegram".to_owned(),
-            display_name: None,
-            status: "active".to_owned(),
-            approved_at_ms: chrono::Utc::now().timestamp_millis(),
-        })?;
+    store.sync_config_authorized_senders(sender_ids)
+}
+
+fn authorize_sender_for_update(store: &Store, update: &IncomingMessage) -> Result<Option<i64>> {
+    let Some(sender_id) = update.sender_id else {
+        return Ok(None);
+    };
+
+    let Some(sender) = store.active_authorized_sender(sender_id)? else {
+        warn!("rejected unauthorized sender: {sender_id}");
+        return Ok(None);
+    };
+
+    if sender.source == "paired" && update.chat_type != "private" {
+        warn!(
+            "rejected paired sender outside private chat: sender_id={sender_id}, chat_type={}",
+            update.chat_type
+        );
+        return Ok(None);
     }
-    Ok(())
+
+    Ok(Some(sender_id))
 }
 
 trait LaneStateLabel {
@@ -2022,6 +2036,67 @@ mod tests {
     fn parse_lane_mode_name_rejects_unknown_mode() {
         let error = parse_lane_mode_name("unknown").expect_err("mode should fail");
         assert!(error.to_string().contains("不正なモード"));
+    }
+
+    #[test]
+    fn authorize_sender_for_update_accepts_config_sender_in_group_chat() {
+        let dir = tempdir().expect("tempdir should be created");
+        let store = Store::open(dir.path().join("bridge.db")).expect("store should open");
+        store
+            .sync_config_authorized_senders(&[42])
+            .expect("config sender should sync");
+        let update = IncomingMessage {
+            update_id: 1,
+            chat_id: -100,
+            chat_type: "group".to_owned(),
+            sender_id: Some(42),
+            text: "hello".to_owned(),
+            attachments: Vec::new(),
+            telegram_message_id: 10,
+            thread_key: "dm".to_owned(),
+            callback_query_id: None,
+            control_command_override: None,
+            payload_json: "{}".to_owned(),
+        };
+
+        assert_eq!(
+            authorize_sender_for_update(&store, &update).expect("auth should succeed"),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn authorize_sender_for_update_rejects_paired_sender_in_group_chat() {
+        let dir = tempdir().expect("tempdir should be created");
+        let store = Store::open(dir.path().join("bridge.db")).expect("store should open");
+        store
+            .upsert_authorized_sender(crate::store::AuthorizedSender {
+                sender_id: 77,
+                platform: "telegram".to_owned(),
+                display_name: None,
+                status: "active".to_owned(),
+                approved_at_ms: 1,
+                source: "paired".to_owned(),
+            })
+            .expect("paired sender should save");
+        let update = IncomingMessage {
+            update_id: 1,
+            chat_id: -100,
+            chat_type: "group".to_owned(),
+            sender_id: Some(77),
+            text: "hello".to_owned(),
+            attachments: Vec::new(),
+            telegram_message_id: 10,
+            thread_key: "dm".to_owned(),
+            callback_query_id: None,
+            control_command_override: None,
+            payload_json: "{}".to_owned(),
+        };
+
+        assert_eq!(
+            authorize_sender_for_update(&store, &update).expect("auth should succeed"),
+            None
+        );
     }
 
     #[test]
@@ -2461,6 +2536,8 @@ mod tests {
                 token_secret_ref: "token".to_owned(),
                 allowed_chat_types: vec!["private".to_owned()],
                 admin_sender_ids: vec![1],
+                api_base_url: "https://api.telegram.org".to_owned(),
+                file_base_url: "https://api.telegram.org/file".to_owned(),
             },
             codex: crate::config::CodexConfig {
                 binary: "codex".to_owned(),

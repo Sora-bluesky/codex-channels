@@ -1,0 +1,39 @@
+{
+  "name": "remotty",
+  "version": "0.1.8",
+  "description": "Plugin-first setup and operations for the remotty Windows local agent bridge.",
+  "author": {
+    "name": "Sora-bluesky",
+    "url": "https://github.com/Sora-bluesky/remotty"
+  },
+  "homepage": "https://github.com/Sora-bluesky/remotty",
+  "repository": "https://github.com/Sora-bluesky/remotty",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "windows",
+    "codex",
+    "bridge",
+    "plugin"
+  ],
+  "interface": {
+    "displayName": "remotty",
+    "shortDescription": "Set up and run the Windows local agent bridge from plugin commands",
+    "longDescription": "Use plugin commands to configure the Telegram bot token, pair an allowed sender, start or inspect the bridge, and run live checks without exposing secrets in repo-tracked files.",
+    "developerName": "Sora-bluesky",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Sora-bluesky/remotty",
+    "privacyPolicyURL": "https://github.com/Sora-bluesky/remotty",
+    "termsOfServiceURL": "https://github.com/Sora-bluesky/remotty",
+    "defaultPrompt": [
+      "Configure the Telegram bridge plugin-first, pair my Telegram account, and start the Windows bridge"
+    ],
+    "brandColor": "#2F6FEB",
+    "screenshots": []
+  }
+}

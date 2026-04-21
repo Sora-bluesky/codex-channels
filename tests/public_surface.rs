@@ -154,6 +154,42 @@ fn secret_surface_audit_rejects_bot_token_like_values() -> Result<()> {
 }
 
 #[test]
+fn secret_surface_audit_rejects_telegram_bot_urls_with_embedded_tokens() -> Result<()> {
+    let repo = tempdir()?;
+    initialize_git_repo(repo.path())?;
+    let script_path = repo.path().join("audit-secret-surface.ps1");
+    std::fs::copy(
+        repo_root().join("scripts").join("audit-secret-surface.ps1"),
+        &script_path,
+    )?;
+    let token_like_value = format!("{}:{}", "123456789", "A".repeat(24));
+    std::fs::write(
+        repo.path().join("README.md"),
+        format!(
+            "Invoke-RestMethod \"https://api.telegram.org/bot{token_like_value}/getUpdates\"\n"
+        ),
+    )?;
+    git_add(repo.path(), "README.md")?;
+
+    let output = Command::new(powershell())
+        .arg("-NoProfile")
+        .arg("-File")
+        .arg(&script_path)
+        .current_dir(repo.path())
+        .output()
+        .with_context(|| format!("failed to run {}", script_path.display()))?;
+
+    assert!(
+        !output.status.success(),
+        "audit-secret-surface should reject Telegram bot URLs with embedded tokens"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("embedded token"));
+
+    Ok(())
+}
+
+#[test]
 fn live_planning_files_and_task_contents_stay_untracked() -> Result<()> {
     let output = Command::new("git")
         .args(["ls-files"])
@@ -200,6 +236,7 @@ fn public_surface_audit_rejects_live_planning_files_present_in_repo() -> Result<
     std::fs::create_dir_all(repo.path().join("scripts"))?;
     for script in [
         "audit-doc-terminology.ps1",
+        "assert-release-doc-review.ps1",
         "audit-secret-surface.ps1",
         "planning-paths.ps1",
         "setup-planning.ps1",
@@ -214,6 +251,7 @@ fn public_surface_audit_rejects_live_planning_files_present_in_repo() -> Result<
     for tracked_path in [
         "tasks/README.md",
         "scripts/audit-doc-terminology.ps1",
+        "scripts/assert-release-doc-review.ps1",
         "scripts/audit-secret-surface.ps1",
         "scripts/planning-paths.ps1",
         "scripts/setup-planning.ps1",
@@ -262,6 +300,7 @@ fn public_surface_audit_rejects_unexpected_tracked_task_files() -> Result<()> {
     std::fs::create_dir_all(repo.path().join("scripts"))?;
     for script in [
         "audit-doc-terminology.ps1",
+        "assert-release-doc-review.ps1",
         "audit-secret-surface.ps1",
         "planning-paths.ps1",
         "setup-planning.ps1",
@@ -277,6 +316,7 @@ fn public_surface_audit_rejects_unexpected_tracked_task_files() -> Result<()> {
         "tasks/README.md",
         "tasks/notes.md",
         "scripts/audit-doc-terminology.ps1",
+        "scripts/assert-release-doc-review.ps1",
         "scripts/audit-secret-surface.ps1",
         "scripts/planning-paths.ps1",
         "scripts/setup-planning.ps1",
@@ -326,6 +366,7 @@ fn public_surface_audit_rejects_live_planning_files_anywhere_in_repo() -> Result
     std::fs::create_dir_all(repo.path().join("scripts"))?;
     for script in [
         "audit-doc-terminology.ps1",
+        "assert-release-doc-review.ps1",
         "audit-secret-surface.ps1",
         "planning-paths.ps1",
         "setup-planning.ps1",
@@ -340,6 +381,7 @@ fn public_surface_audit_rejects_live_planning_files_anywhere_in_repo() -> Result
     for tracked_path in [
         "tasks/README.md",
         "scripts/audit-doc-terminology.ps1",
+        "scripts/assert-release-doc-review.ps1",
         "scripts/audit-secret-surface.ps1",
         "scripts/planning-paths.ps1",
         "scripts/setup-planning.ps1",

@@ -110,7 +110,7 @@ function Wait-ReleaseWorkflowForTag {
     throw "Timed out waiting for the Release workflow for $Tag."
 }
 
-$resolvedRepoRoot = Resolve-CodexChannelsRepoRoot -RepoRoot $RepoRoot
+$resolvedRepoRoot = Resolve-RemottyRepoRoot -RepoRoot $RepoRoot
 if ([string]::IsNullOrWhiteSpace($HistoryPath)) {
     $HistoryPath = Join-Path $resolvedRepoRoot 'scripts/release-history.psd1'
 }

@@ -30,10 +30,11 @@ $failures = New-Object System.Collections.Generic.List[string]
 $requiredTracked = @(
     'tasks/README.md',
     'scripts/audit-doc-terminology.ps1',
+    'scripts/assert-release-doc-review.ps1',
     'scripts/audit-secret-surface.ps1',
     'scripts/planning-paths.ps1',
     'scripts/setup-planning.ps1',
-    'scripts/sync-roadmap.ps1'
+    'scripts/sync-roadmap.ps1',
     'scripts/validate-planning.ps1'
 )
 

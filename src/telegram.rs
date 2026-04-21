@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -11,6 +12,8 @@ use std::{
 pub struct TelegramClient {
     http: Client,
     token: String,
+    api_base_url: String,
+    file_base_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +29,21 @@ pub struct IncomingMessage {
     pub callback_query_id: Option<String>,
     pub control_command_override: Option<TelegramControlCommand>,
     pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingUpdate {
+    pub update_id: i64,
+    pub message: PairingMessage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingMessage {
+    pub chat_id: i64,
+    pub chat_type: String,
+    pub sender_id: i64,
+    pub text: String,
+    pub sent_at_s: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +131,7 @@ struct Update {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct Message {
     message_id: i64,
+    date: Option<i64>,
     text: Option<String>,
     caption: Option<String>,
     chat: Chat,
@@ -168,12 +187,94 @@ struct TelegramFileResult {
     file_path: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct TelegramBotInfo {
+    pub id: i64,
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct TelegramWebhookInfo {
+    pub url: String,
+}
+
 impl TelegramClient {
     pub fn new(token: String) -> Self {
+        Self::with_base_urls(
+            token,
+            "https://api.telegram.org".to_owned(),
+            "https://api.telegram.org/file".to_owned(),
+        )
+    }
+
+    pub fn with_base_urls(token: String, api_base_url: String, file_base_url: String) -> Self {
         Self {
             http: Client::new(),
             token,
+            api_base_url: api_base_url.trim_end_matches('/').to_owned(),
+            file_base_url: file_base_url.trim_end_matches('/').to_owned(),
         }
+    }
+
+    pub async fn get_me(&self) -> Result<TelegramBotInfo> {
+        let url = self.api_url("getMe");
+        let response: ApiResponse<TelegramBotInfo> = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("telegram getMe request failed")?
+            .error_for_status()
+            .context("telegram getMe returned error status")?
+            .json()
+            .await
+            .context("failed to decode telegram getMe response")?;
+        if !response.ok {
+            bail!("telegram getMe returned ok=false");
+        }
+        Ok(response.result)
+    }
+
+    pub async fn get_webhook_info(&self) -> Result<TelegramWebhookInfo> {
+        let url = self.api_url("getWebhookInfo");
+        let response: ApiResponse<TelegramWebhookInfo> = self
+            .http
+            .post(url)
+            .send()
+            .await
+            .context("telegram getWebhookInfo request failed")?
+            .error_for_status()
+            .context("telegram getWebhookInfo returned error status")?
+            .json()
+            .await
+            .context("failed to decode telegram getWebhookInfo response")?;
+        if !response.ok {
+            bail!("telegram getWebhookInfo returned ok=false");
+        }
+        Ok(response.result)
+    }
+
+    pub async fn delete_webhook(&self, drop_pending_updates: bool) -> Result<()> {
+        let url = self.api_url("deleteWebhook");
+        let body = serde_json::json!({
+            "drop_pending_updates": drop_pending_updates,
+        });
+        let response: ApiResponse<bool> = self
+            .http
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .context("telegram deleteWebhook request failed")?
+            .error_for_status()
+            .context("telegram deleteWebhook returned error status")?
+            .json()
+            .await
+            .context("failed to decode telegram deleteWebhook response")?;
+        if !response.ok || !response.result {
+            bail!("telegram deleteWebhook returned ok=false");
+        }
+        Ok(())
     }
 
     pub async fn get_updates(
@@ -181,27 +282,42 @@ impl TelegramClient {
         offset: Option<i64>,
         timeout_sec: u64,
     ) -> Result<Vec<IncomingMessage>> {
-        let url = format!("https://api.telegram.org/bot{}/getUpdates", self.token);
-        let body = serde_json::json!({
-            "offset": offset,
-            "timeout": timeout_sec,
-            "allowed_updates": ["message", "edited_message", "callback_query"],
-        });
-
-        let response: ApiResponse<Vec<Update>> = self
-            .http
-            .post(url)
-            .json(&body)
-            .send()
-            .await
-            .context("telegram getUpdates request failed")?
-            .error_for_status()
-            .context("telegram getUpdates returned error status")?
-            .json()
-            .await
-            .context("failed to decode telegram getUpdates response")?;
-
+        let response = self
+            .request_updates(
+                offset,
+                timeout_sec,
+                &["message", "edited_message", "callback_query"],
+            )
+            .await?;
         parse_updates(response)
+    }
+
+    pub async fn get_pairing_updates(
+        &self,
+        offset: Option<i64>,
+        timeout_sec: u64,
+    ) -> Result<Vec<PairingUpdate>> {
+        let response = self
+            .request_updates(offset, timeout_sec, &["message"])
+            .await?;
+        parse_pairing_updates(response)
+    }
+
+    pub async fn drain_pending_updates(&self) -> Result<()> {
+        let mut offset = None;
+        loop {
+            let response = self
+                .request_updates(offset, 0, &["message", "edited_message", "callback_query"])
+                .await?;
+            if !response.ok {
+                bail!("telegram getUpdates returned ok=false");
+            }
+            let Some(last_update_id) = response.result.iter().map(|update| update.update_id).max()
+            else {
+                return Ok(());
+            };
+            offset = Some(last_update_id + 1);
+        }
     }
 
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<SendMessageResult> {
@@ -235,7 +351,7 @@ impl TelegramClient {
         text: &str,
         reply_markup: Option<Value>,
     ) -> Result<SendMessageResult> {
-        let url = format!("https://api.telegram.org/bot{}/sendMessage", self.token);
+        let url = self.api_url("sendMessage");
         let mut body = serde_json::json!({
             "chat_id": chat_id,
             "text": text,
@@ -269,10 +385,7 @@ impl TelegramClient {
         callback_query_id: &str,
         text: Option<&str>,
     ) -> Result<()> {
-        let url = format!(
-            "https://api.telegram.org/bot{}/answerCallbackQuery",
-            self.token
-        );
+        let url = self.api_url("answerCallbackQuery");
         let mut body = serde_json::json!({
             "callback_query_id": callback_query_id,
         });
@@ -317,7 +430,7 @@ impl TelegramClient {
         text: &str,
         reply_markup: Option<Value>,
     ) -> Result<()> {
-        let url = format!("https://api.telegram.org/bot{}/editMessageText", self.token);
+        let url = self.api_url("editMessageText");
         let mut body = serde_json::json!({
             "chat_id": chat_id,
             "message_id": message_id,
@@ -341,7 +454,7 @@ impl TelegramClient {
         &self,
         attachment: &TelegramAttachment,
     ) -> Result<TelegramRemoteFile> {
-        let url = format!("https://api.telegram.org/bot{}/getFile", self.token);
+        let url = self.api_url("getFile");
         let body = serde_json::json!({
             "file_id": attachment.file_id,
         });
@@ -422,10 +535,7 @@ impl TelegramClient {
         let reported_size = remote_file.file_size.or(attachment.file_size);
         ensure_within_limit(reported_size, max_bytes, &attachment.file_id)?;
 
-        let url = format!(
-            "https://api.telegram.org/file/bot{}/{}",
-            self.token, remote_file.file_path
-        );
+        let url = self.file_url(&remote_file.file_path);
         let mut response = self
             .http
             .get(url)
@@ -463,6 +573,53 @@ impl TelegramClient {
 
         Ok(DownloadedTelegramAttachment { remote_file, bytes })
     }
+
+    fn api_url(&self, method: &str) -> String {
+        format!("{}/bot{}/{}", self.api_base_url, self.token, method)
+    }
+
+    fn file_url(&self, file_path: &str) -> String {
+        format!(
+            "{}/bot{}/{}",
+            self.file_base_url,
+            self.token,
+            file_path.trim_start_matches('/')
+        )
+    }
+
+    async fn request_updates(
+        &self,
+        offset: Option<i64>,
+        timeout_sec: u64,
+        allowed_updates: &[&str],
+    ) -> Result<ApiResponse<Vec<Update>>> {
+        let url = self.api_url("getUpdates");
+        let body = serde_json::json!({
+            "offset": offset,
+            "timeout": timeout_sec,
+            "allowed_updates": allowed_updates,
+        });
+
+        self.http
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .context("telegram getUpdates request failed")
+            .and_then(|response| {
+                if response.status() == StatusCode::CONFLICT {
+                    bail!(
+                        "telegram getUpdates returned 409 Conflict. Stop any other bridge, live smoke, or bot worker that is reading updates for this bot, then retry."
+                    );
+                }
+                response
+                    .error_for_status()
+                    .context("telegram getUpdates returned error status")
+            })?
+            .json()
+            .await
+            .context("failed to decode telegram getUpdates response")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -492,6 +649,37 @@ fn parse_updates(response: ApiResponse<Vec<Update>>) -> Result<Vec<IncomingMessa
         if let Some(message) = normalize_update(update)? {
             messages.push(message);
         }
+    }
+    Ok(messages)
+}
+
+fn parse_pairing_updates(response: ApiResponse<Vec<Update>>) -> Result<Vec<PairingUpdate>> {
+    if !response.ok {
+        bail!("telegram getUpdates returned ok=false");
+    }
+
+    let mut messages = Vec::new();
+    for update in response.result {
+        let Some(message) = update.message else {
+            continue;
+        };
+        let Some(sender_id) = message.from.as_ref().map(|user| user.id) else {
+            continue;
+        };
+        let text = normalized_message_text(&message, &collect_attachments(&message));
+        if text.trim().is_empty() {
+            continue;
+        }
+        messages.push(PairingUpdate {
+            update_id: update.update_id,
+            message: PairingMessage {
+                chat_id: message.chat.id,
+                chat_type: message.chat.kind,
+                sender_id,
+                text,
+                sent_at_s: message.date.unwrap_or_default(),
+            },
+        });
     }
     Ok(messages)
 }
@@ -1186,7 +1374,7 @@ mod tests {
     #[test]
     fn parses_status_command_with_bot_suffix() {
         assert_eq!(
-            parse_control_command("/status@codex_channels_bot"),
+            parse_control_command("/status@remotty_bot"),
             Some(TelegramControlCommand::Status)
         );
     }

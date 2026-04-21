@@ -9,6 +9,7 @@ pub enum CliCommand {
     Run { config_path: PathBuf },
     Secret(SecretCommand),
     Service(ServiceCommand),
+    Telegram(TelegramCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +28,30 @@ pub enum ServiceCommand {
     Status,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TelegramCommand {
+    Configure {
+        config_path: PathBuf,
+    },
+    Pair {
+        config_path: PathBuf,
+    },
+    PolicyAllowlist {
+        config_path: PathBuf,
+    },
+    LiveEnvCheck,
+    Smoke {
+        scenario: TelegramSmokeScenario,
+        config_path: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelegramSmokeScenario {
+    ApprovalAccept,
+    ApprovalDecline,
+}
+
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<CliCommand> {
     let args = args.into_iter().collect::<Vec<_>>();
     if args.is_empty() {
@@ -38,6 +63,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<CliCommand> 
     match args[0].as_str() {
         "secret" => parse_secret_command(&args[1..]),
         "service" => parse_service_command(&args[1..]),
+        "telegram" => parse_telegram_command(&args[1..]),
         "--config" => {
             let config_path = args
                 .get(1)
@@ -50,6 +76,67 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<CliCommand> 
             })
         }
         other => bail!("unknown command: {other}"),
+    }
+}
+
+fn parse_telegram_command(args: &[String]) -> Result<CliCommand> {
+    match args {
+        [action] if action == "configure" => Ok(CliCommand::Telegram(TelegramCommand::Configure {
+            config_path: PathBuf::from(DEFAULT_CONFIG_PATH),
+        })),
+        [action, flag, value] if action == "configure" && flag == "--config" => {
+            Ok(CliCommand::Telegram(TelegramCommand::Configure {
+                config_path: PathBuf::from(value),
+            }))
+        }
+        [action] if action == "pair" => Ok(CliCommand::Telegram(TelegramCommand::Pair {
+            config_path: PathBuf::from(DEFAULT_CONFIG_PATH),
+        })),
+        [action, flag, value] if action == "pair" && flag == "--config" => {
+            Ok(CliCommand::Telegram(TelegramCommand::Pair {
+                config_path: PathBuf::from(value),
+            }))
+        }
+        [group, action] if group == "policy" && action == "allowlist" => {
+            Ok(CliCommand::Telegram(TelegramCommand::PolicyAllowlist {
+                config_path: PathBuf::from(DEFAULT_CONFIG_PATH),
+            }))
+        }
+        [group, action, flag, value]
+            if group == "policy" && action == "allowlist" && flag == "--config" =>
+        {
+            Ok(CliCommand::Telegram(TelegramCommand::PolicyAllowlist {
+                config_path: PathBuf::from(value),
+            }))
+        }
+        [action] if action == "live-env-check" => {
+            Ok(CliCommand::Telegram(TelegramCommand::LiveEnvCheck))
+        }
+        [action, subaction, scenario] if action == "smoke" && subaction == "approval" => {
+            Ok(CliCommand::Telegram(TelegramCommand::Smoke {
+                scenario: parse_smoke_scenario(scenario)?,
+                config_path: PathBuf::from(DEFAULT_CONFIG_PATH),
+            }))
+        }
+        [action, subaction, scenario, flag, value]
+            if action == "smoke" && subaction == "approval" && flag == "--config" =>
+        {
+            Ok(CliCommand::Telegram(TelegramCommand::Smoke {
+                scenario: parse_smoke_scenario(scenario)?,
+                config_path: PathBuf::from(value),
+            }))
+        }
+        _ => bail!(
+            "usage: telegram configure [--config <path>] | telegram pair [--config <path>] | telegram policy allowlist [--config <path>] | telegram live-env-check | telegram smoke approval <accept|decline> [--config <path>]"
+        ),
+    }
+}
+
+fn parse_smoke_scenario(value: &str) -> Result<TelegramSmokeScenario> {
+    match value {
+        "accept" => Ok(TelegramSmokeScenario::ApprovalAccept),
+        "decline" => Ok(TelegramSmokeScenario::ApprovalDecline),
+        other => bail!("unknown smoke scenario: {other}"),
     }
 }
 
@@ -93,7 +180,10 @@ fn parse_service_command(args: &[String]) -> Result<CliCommand> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliCommand, SecretCommand, ServiceCommand, parse_args};
+    use super::{
+        CliCommand, SecretCommand, ServiceCommand, TelegramCommand, TelegramSmokeScenario,
+        parse_args,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -164,5 +254,92 @@ mod tests {
         let error = parse_args(vec!["service".to_owned(), "run".to_owned()])
             .expect_err("service run without config should fail");
         assert!(error.to_string().contains("usage: service"));
+    }
+
+    #[test]
+    fn parse_args_supports_telegram_configure() {
+        assert_eq!(
+            parse_args(vec!["telegram".to_owned(), "configure".to_owned()])
+                .expect("telegram configure should parse"),
+            CliCommand::Telegram(TelegramCommand::Configure {
+                config_path: PathBuf::from("bridge.toml"),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_args_supports_telegram_pair_with_config() {
+        assert_eq!(
+            parse_args(vec![
+                "telegram".to_owned(),
+                "pair".to_owned(),
+                "--config".to_owned(),
+                "prod/bridge.toml".to_owned(),
+            ])
+            .expect("telegram pair should parse"),
+            CliCommand::Telegram(TelegramCommand::Pair {
+                config_path: PathBuf::from("prod/bridge.toml"),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_args_supports_telegram_policy_allowlist() {
+        assert_eq!(
+            parse_args(vec![
+                "telegram".to_owned(),
+                "policy".to_owned(),
+                "allowlist".to_owned(),
+            ])
+            .expect("telegram policy allowlist should parse"),
+            CliCommand::Telegram(TelegramCommand::PolicyAllowlist {
+                config_path: PathBuf::from("bridge.toml"),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_args_supports_live_env_check() {
+        assert_eq!(
+            parse_args(vec!["telegram".to_owned(), "live-env-check".to_owned(),])
+                .expect("telegram live-env-check should parse"),
+            CliCommand::Telegram(TelegramCommand::LiveEnvCheck)
+        );
+    }
+
+    #[test]
+    fn parse_args_supports_smoke_accept() {
+        assert_eq!(
+            parse_args(vec![
+                "telegram".to_owned(),
+                "smoke".to_owned(),
+                "approval".to_owned(),
+                "accept".to_owned(),
+            ])
+            .expect("telegram smoke approval accept should parse"),
+            CliCommand::Telegram(TelegramCommand::Smoke {
+                scenario: TelegramSmokeScenario::ApprovalAccept,
+                config_path: PathBuf::from("bridge.toml"),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_args_supports_smoke_decline_with_config() {
+        assert_eq!(
+            parse_args(vec![
+                "telegram".to_owned(),
+                "smoke".to_owned(),
+                "approval".to_owned(),
+                "decline".to_owned(),
+                "--config".to_owned(),
+                "prod/bridge.toml".to_owned(),
+            ])
+            .expect("telegram smoke approval decline should parse"),
+            CliCommand::Telegram(TelegramCommand::Smoke {
+                scenario: TelegramSmokeScenario::ApprovalDecline,
+                config_path: PathBuf::from("prod/bridge.toml"),
+            })
+        );
     }
 }

@@ -14,12 +14,12 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-common.ps1')
 . (Join-Path $PSScriptRoot 'planning-paths.ps1')
 
-$resolvedRepoRoot = Resolve-CodexChannelsRepoRoot -RepoRoot $RepoRoot
+$resolvedRepoRoot = Resolve-RemottyRepoRoot -RepoRoot $RepoRoot
 if ([string]::IsNullOrWhiteSpace($HistoryPath)) {
-    $HistoryPath = Resolve-CodexChannelsScriptPath -RepoRoot $resolvedRepoRoot -RelativePath 'scripts/release-history.psd1'
+    $HistoryPath = Resolve-RemottyScriptPath -RepoRoot $resolvedRepoRoot -RelativePath 'scripts/release-history.psd1'
 }
 if ([string]::IsNullOrWhiteSpace($BacklogPath)) {
-    $BacklogPath = Resolve-CodexChannelsExternalPlanningFilePath -EnvironmentVariable 'CODEX_CHANNELS_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
+    $BacklogPath = Resolve-RemottyExternalPlanningFilePath -EnvironmentVariable 'REMOTTY_BACKLOG_PATH' -DefaultFileName 'backlog.yaml'
 }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = 'release/release-body.md'
