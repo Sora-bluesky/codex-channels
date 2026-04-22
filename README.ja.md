@@ -56,7 +56,7 @@ Telegram bot を作る前に試す場合は、
 
 ## 主なコマンド
 
-ローカルの `remotty` プラグインを入れたあと、Codex App で使います。
+Codex App では、ローカルの `remotty` プラグインから使います。
 
 ```text
 /remotty-configure
@@ -67,8 +67,11 @@ Telegram bot を作る前に試す場合は、
 /remotty-status
 /remotty-live-env-check
 /remotty-sessions
-/remotty-sessions <thread_id>
 ```
+
+Codex CLI を使う場合は、PowerShell から同じ設定を行えます。
+どちらの場合も、ブリッジはローカルの `codex` 実行ファイルを呼びます。
+PowerShell のコマンドは、クイックスタートに載せています。
 
 Telegram で使います。
 
@@ -78,6 +81,7 @@ Telegram で使います。
 /stop
 /approve <request_id>
 /deny <request_id>
+/remotty-sessions <thread_id>
 /workspace
 /workspace <id>
 ```

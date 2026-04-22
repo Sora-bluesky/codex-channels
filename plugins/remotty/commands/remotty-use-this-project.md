@@ -1,6 +1,6 @@
 # /remotty-use-this-project
 
-Register the current Codex App project as the default `remotty` workspace.
+Register the current project as the default `remotty` workspace.
 
 ## Workflow
 
@@ -18,4 +18,4 @@ Only for repo contributors: if the `remotty` command is unavailable in a source 
 - Do not ask the user to edit `bridge.toml`.
 - State the project path that was registered.
 - State that no files were written into the project repository.
-- If the path cannot be resolved, ask the user to open the target project in Codex App and rerun the command.
+- If the path cannot be resolved, ask the user to open or enter the target project and rerun the command.
