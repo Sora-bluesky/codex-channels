@@ -29,30 +29,52 @@ npm install -g remotty
 
 ```powershell
 $remottyRoot = Join-Path (npm root -g) "remotty"
+$configPath = Join-Path $env:APPDATA "remotty\bridge.toml"
 ```
 
-## 2. 作業したいプロジェクトを開く
+以降の PowerShell 例では、`$configPath` を使います。
 
-Codex App で、Telegram から続けたいプロジェクトを開きます。
+## 2. 作業したいプロジェクトへ入る
+
+Telegram から続けたいプロジェクトを使います。
 毎回同じプロジェクトを使う必要はありません。
+
+Codex App を使う場合は、そのプロジェクトを App で開きます。
+
+Codex CLI を使う場合は、PowerShell でフォルダへ入ります。
+
+```powershell
+Set-Location C:\path\to\your\project
+```
 
 ## 3. ローカルプラグインを入れる
 
-Codex App の Plugins 画面で次を行います。
+Codex App では、ローカルプラグインを使えます。
+
+Plugins 画面で次を行います。
 
 1. `$remottyRoot` 配下の `.agents/plugins/marketplace.json` を追加します。
 2. `remotty` というプラグインを入れます。
 3. Plugins 画面に `remotty` が表示されることを確認します。
 
+Codex CLI だけで使う場合は、この手順を飛ばせます。
+以降にある PowerShell のコマンドを使ってください。
+
 ## 4. このプロジェクトを登録する
 
-Codex App で実行します。
+Codex App では、次を実行します。
 
 ```text
 /remotty-use-this-project
 ```
 
-このコマンドは、開いているプロジェクトを `%APPDATA%\remotty` の設定へ保存します。
+Codex CLI では、プロジェクトフォルダで次を実行します。
+
+```powershell
+remotty config workspace upsert --config $configPath --path (Get-Location).Path
+```
+
+この操作は、プロジェクトを `%APPDATA%\remotty` の設定へ保存します。
 プロジェクトのリポジトリには書き込みません。
 
 ## 5. Telegram bot を作る
@@ -67,10 +89,16 @@ token をチャット、スクリーンショット、issue、PR に貼らない
 
 ## 6. bot token を保存する
 
-Codex App で実行します。
+Codex App では、次を実行します。
 
 ```text
 /remotty-configure
+```
+
+Codex CLI では、次を実行します。
+
+```powershell
+remotty telegram configure --config $configPath
 ```
 
 表示に従って token を貼ります。
@@ -78,10 +106,17 @@ Codex App で実行します。
 
 ## 7. ブリッジを起動する
 
-Codex App で実行します。
+Codex App では、次を実行します。
 
 ```text
 /remotty-start
+```
+
+Codex CLI では、次を実行します。
+
+```powershell
+# フォアグラウンドでブリッジを起動します。
+remotty --config $configPath
 ```
 
 Telegram から使う間は、ブリッジを起動したままにします。
@@ -92,10 +127,16 @@ Telegram から使う間は、ブリッジを起動したままにします。
 Telegram の private chat で、bot へ任意のメッセージを送ります。
 
 bot は `remotty pairing code` を返します。
-Codex App で実行します。
+Codex App では、次を実行します。
 
 ```text
 /remotty-access-pair <code>
+```
+
+Codex CLI では、次を実行します。
+
+```powershell
+remotty telegram access-pair <code> --config $configPath
 ```
 
 次に、送信者を許可します。
@@ -104,18 +145,30 @@ Codex App で実行します。
 /remotty-policy-allowlist
 ```
 
+Codex CLI では、次を実行します。
+
+```powershell
+remotty telegram policy allowlist --config $configPath
+```
+
 これで、他の Telegram ユーザーが手元の Codex を操作できなくなります。
 
 ## 9. Codex スレッドを選ぶ
 
-Codex App で実行します。
+Codex App では、次を実行します。
 
 ```text
 /remotty-sessions
 ```
 
+Codex CLI では、次を実行します。
+
+```powershell
+remotty telegram sessions --config $configPath
+```
+
 Telegram から続けたいスレッドを選びます。
-この Telegram チャットへ対応付けます。
+対象の Telegram チャットで次を送ります。
 
 ```text
 /remotty-sessions <thread_id>
@@ -154,8 +207,10 @@ Codex が承認を求めると、`remotty` は Telegram へ中継します。
 ### bot が返信しない
 
 - `/remotty-start` が動いているか確認します。
-- Codex App で `/remotty-status` を実行します。
-- Codex App で `/remotty-live-env-check` を実行します。
+- Codex App では `/remotty-status` を実行します。
+- Codex App では `/remotty-live-env-check` を実行します。
+- PowerShell では `remotty service status` を実行します。
+- PowerShell では `remotty telegram live-env-check --config $configPath` を実行します。
 - webhook 状態が `webhook-configured` なら polling へ戻します。
 
 ### Codex スレッドが出ない

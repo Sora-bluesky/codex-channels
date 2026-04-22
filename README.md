@@ -59,7 +59,7 @@ Use the [Fakechat Demo](docs/fakechat-demo.md).
 
 ## Main Commands
 
-Run these in the Codex App after installing the local `remotty` plugin:
+If you use Codex App, install the local `remotty` plugin and run:
 
 ```text
 /remotty-configure
@@ -70,8 +70,11 @@ Run these in the Codex App after installing the local `remotty` plugin:
 /remotty-status
 /remotty-live-env-check
 /remotty-sessions
-/remotty-sessions <thread_id>
 ```
+
+If you use Codex CLI, run the same setup from PowerShell.
+The bridge calls the local `codex` executable in both cases.
+See the quickstart for the PowerShell commands.
 
 Run these in Telegram:
 
@@ -81,6 +84,7 @@ Run these in Telegram:
 /stop
 /approve <request_id>
 /deny <request_id>
+/remotty-sessions <thread_id>
 /workspace
 /workspace <id>
 ```
