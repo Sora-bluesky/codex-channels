@@ -239,7 +239,7 @@
         }
         @{
             Version = "0.2.2"
-            Commit = "pending"
+            Commit = "18276cf551f757e20198a90ef7692f58cbfa61fb"
             Title = "Saved Codex thread message relay"
             Notes = @(
                 "Resumed the selected saved Codex thread before each Telegram turn."
