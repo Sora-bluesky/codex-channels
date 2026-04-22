@@ -117,13 +117,29 @@ Assert-FileContains -Path 'README.ja.md' -Needle 'Codex スレッド'
 Assert-FileContains -Path 'README.ja.md' -Needle 'Telegram クイックスタート'
 Assert-FileContains -Path 'README.ja.md' -Needle '高度な CLI モード'
 Assert-FileContains -Path 'docs/telegram-quickstart.md' -Needle '/remotty-sessions <thread_id>'
-Assert-FileContains -Path 'docs/telegram-quickstart.md' -Needle 'You do not need to choose a transport'
+Assert-FileContains -Path 'docs/telegram-quickstart.md' -Needle '/remotty-use-this-project'
 Assert-FileContains -Path 'docs/telegram-quickstart.ja.md' -Needle '/remotty-sessions <thread_id>'
-Assert-FileContains -Path 'docs/telegram-quickstart.ja.md' -Needle 'ほかの項目を変更する必要はありません'
+Assert-FileContains -Path 'docs/telegram-quickstart.ja.md' -Needle '/remotty-use-this-project'
 Assert-FileContains -Path 'docs/exec-transport.md' -Needle 'transport = "exec"'
 Assert-FileContains -Path 'docs/exec-transport.ja.md' -Needle 'transport = "exec"'
 Assert-FileContains -Path 'docs/upgrading.md' -Needle 'transport = "app_server"'
 Assert-FileContains -Path 'docs/upgrading.ja.md' -Needle 'transport = "app_server"'
+
+if (Test-Path -LiteralPath 'docs/telegram-quickstart.md') {
+    $quickstart = Get-Content -LiteralPath 'docs/telegram-quickstart.md' -Raw
+    if ($quickstart.Contains('writable_roots') -or
+        $quickstart.Contains('path = "C:/Users/you/Documents/project"')) {
+        $failures.Add('Telegram quickstart must not use bridge.toml workspace editing in the main path.') | Out-Null
+    }
+}
+
+if (Test-Path -LiteralPath 'docs/telegram-quickstart.ja.md') {
+    $quickstartJa = Get-Content -LiteralPath 'docs/telegram-quickstart.ja.md' -Raw
+    if ($quickstartJa.Contains('writable_roots') -or
+        $quickstartJa.Contains('path = "C:/Users/you/Documents/project"')) {
+        $failures.Add('Japanese Telegram quickstart must not use bridge.toml workspace editing in the main path.') | Out-Null
+    }
+}
 
 if ($failures.Count -gt 0) {
     [Console]::Error.WriteLine("public surface audit failed:`n- " + ($failures -join "`n- "))

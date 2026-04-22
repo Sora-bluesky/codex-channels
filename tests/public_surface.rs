@@ -85,6 +85,7 @@ fn npm_package_keeps_binary_install_contract() -> Result<()> {
     assert!(readme.contains("Codex thread"));
     assert!(readme.contains("Telegram Quickstart"));
     assert!(readme.contains("Advanced CLI Mode"));
+    assert!(quickstart.contains("/remotty-use-this-project"));
     assert!(!readme.contains("releases/latest/download/remotty.tgz"));
     assert!(development_doc.contains("NPM_TOKEN"));
     assert!(development_doc.contains("npm publish .\\release\\remotty.tgz"));
@@ -109,9 +110,13 @@ fn public_docs_explain_thread_setup_and_advanced_mode() -> Result<()> {
     assert!(readme_ja.contains("Telegram クイックスタート"));
     assert!(readme_ja.contains("高度な CLI モード"));
     assert!(quickstart.contains("/remotty-sessions <thread_id>"));
-    assert!(quickstart.contains("You do not need to choose a transport"));
+    assert!(quickstart.contains("/remotty-use-this-project"));
+    assert!(!quickstart.contains("writable_roots"));
+    assert!(!quickstart.contains("path = \"C:/Users/you/Documents/project\""));
     assert!(quickstart_ja.contains("/remotty-sessions <thread_id>"));
-    assert!(quickstart_ja.contains("ほかの項目を変更する必要はありません"));
+    assert!(quickstart_ja.contains("/remotty-use-this-project"));
+    assert!(!quickstart_ja.contains("writable_roots"));
+    assert!(!quickstart_ja.contains("path = \"C:/Users/you/Documents/project\""));
     assert!(exec_doc.contains("transport = \"exec\""));
     assert!(exec_doc_ja.contains("transport = \"exec\""));
     assert!(upgrading.contains("transport = \"app_server\""));

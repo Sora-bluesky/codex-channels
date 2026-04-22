@@ -5,6 +5,7 @@ This local plugin wraps the `remotty` bridge with user-facing Codex commands.
 Use it for:
 
 - token setup without echoing the token in the terminal
+- current project registration without hand-editing `bridge.toml`
 - pairing a Telegram sender into the allowlist
 - bridge start, stop, and status workflows
 - live environment checks before manual smoke runs
@@ -14,6 +15,7 @@ Use it for:
 Available commands:
 
 - `/remotty-configure`
+- `/remotty-use-this-project`
 - `/remotty-access-pair`: pair from a code returned by the running Telegram bridge
 - `/remotty-pair`: fallback pairing when the bridge cannot reply with a code
 - `/remotty-policy-allowlist`

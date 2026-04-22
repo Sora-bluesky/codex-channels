@@ -63,6 +63,7 @@ Run these in the Codex App after installing the local `remotty` plugin:
 
 ```text
 /remotty-configure
+/remotty-use-this-project
 /remotty-start
 /remotty-access-pair <code>
 /remotty-policy-allowlist
