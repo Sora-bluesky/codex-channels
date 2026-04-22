@@ -80,9 +80,43 @@ fn npm_package_keeps_binary_install_contract() -> Result<()> {
     assert!(release_workflow.contains("npm publish ./release/remotty-*.tgz --access public"));
     assert!(readme.contains("docs/assets/hero.png"));
     assert!(readme.contains("npm install -g remotty"));
+    assert!(readme.contains("saved Codex thread"));
+    assert!(readme.contains("codex app-server"));
+    assert!(readme.contains("codex.transport = \"app_server\""));
+    assert!(readme.contains("Migration From v0.1"));
     assert!(!readme.contains("releases/latest/download/remotty.tgz"));
     assert!(development_doc.contains("NPM_TOKEN"));
     assert!(development_doc.contains("npm publish .\\release\\remotty.tgz"));
+
+    Ok(())
+}
+
+#[test]
+fn public_docs_explain_saved_thread_setup_and_migration() -> Result<()> {
+    let readme_ja = std::fs::read_to_string(repo_root().join("README.ja.md"))?;
+    let quickstart =
+        std::fs::read_to_string(repo_root().join("docs").join("telegram-quickstart.md"))?;
+    let quickstart_ja =
+        std::fs::read_to_string(repo_root().join("docs").join("telegram-quickstart.ja.md"))?;
+    let migration =
+        std::fs::read_to_string(repo_root().join("docs").join("migration-v0.1-to-v0.2.md"))?;
+    let migration_ja = std::fs::read_to_string(
+        repo_root()
+            .join("docs")
+            .join("migration-v0.1-to-v0.2.ja.md"),
+    )?;
+
+    assert!(readme_ja.contains("保存済み Codex スレッド"));
+    assert!(readme_ja.contains("codex app-server"));
+    assert!(readme_ja.contains("codex.transport = \"app_server\""));
+    assert!(quickstart.contains("/remotty-sessions <thread_id>"));
+    assert!(quickstart.contains("does not type into the open Codex App window"));
+    assert!(quickstart_ja.contains("/remotty-sessions <thread_id>"));
+    assert!(quickstart_ja.contains("開いている Codex App 画面へキー入力するものではありません"));
+    assert!(migration.contains("separate-run bridge"));
+    assert!(migration.contains("saved-thread relay"));
+    assert!(migration_ja.contains("別実行のブリッジ"));
+    assert!(migration_ja.contains("保存済みスレッド"));
 
     Ok(())
 }
