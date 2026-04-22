@@ -7,10 +7,19 @@ const DEFAULT_CONFIG_PATH: &str = "bridge.toml";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Run { config_path: PathBuf },
+    Config(ConfigCommand),
     Demo(DemoCommand),
     Secret(SecretCommand),
     Service(ServiceCommand),
     Telegram(TelegramCommand),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigCommand {
+    WorkspaceUpsert {
+        config_path: PathBuf,
+        workspace_path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +100,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<CliCommand> 
         "service" => parse_service_command(&args[1..]),
         "telegram" => parse_telegram_command(&args[1..]),
         "demo" => parse_demo_command(&args[1..]),
+        "config" => parse_config_command(&args[1..]),
         "--config" => {
             let config_path = args
                 .get(1)
@@ -104,6 +114,34 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<CliCommand> 
         }
         other => bail!("unknown command: {other}"),
     }
+}
+
+fn parse_config_command(args: &[String]) -> Result<CliCommand> {
+    let usage = "usage: config workspace upsert --config <path> --path <dir>";
+    if !matches!(args, [group, action, ..] if group == "workspace" && action == "upsert") {
+        bail!("{usage}");
+    }
+
+    let mut config_path = None;
+    let mut workspace_path = None;
+    let mut index = 2;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let value = args
+            .get(index + 1)
+            .ok_or_else(|| anyhow::anyhow!("missing value after {flag}"))?;
+        match flag {
+            "--config" => config_path = Some(PathBuf::from(value)),
+            "--path" => workspace_path = Some(PathBuf::from(value)),
+            other => bail!("unknown config workspace upsert option: {other}"),
+        }
+        index += 2;
+    }
+
+    Ok(CliCommand::Config(ConfigCommand::WorkspaceUpsert {
+        config_path: config_path.ok_or_else(|| anyhow::anyhow!("{usage}"))?,
+        workspace_path: workspace_path.ok_or_else(|| anyhow::anyhow!("{usage}"))?,
+    }))
 }
 
 fn parse_demo_command(args: &[String]) -> Result<CliCommand> {
@@ -295,8 +333,8 @@ fn parse_service_command(args: &[String]) -> Result<CliCommand> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CliCommand, DemoCommand, FakechatOptions, SecretCommand, ServiceCommand, TelegramCommand,
-        TelegramSmokeScenario, parse_args,
+        CliCommand, ConfigCommand, DemoCommand, FakechatOptions, SecretCommand, ServiceCommand,
+        TelegramCommand, TelegramSmokeScenario, parse_args,
     };
     use std::path::PathBuf;
 
@@ -351,6 +389,26 @@ mod tests {
         assert_eq!(options.codex_binary, "codex");
         assert_eq!(options.model, "gpt-5.4");
         assert_eq!(options.thread_id, None);
+    }
+
+    #[test]
+    fn parse_args_supports_config_workspace_upsert() {
+        assert_eq!(
+            parse_args(vec![
+                "config".to_owned(),
+                "workspace".to_owned(),
+                "upsert".to_owned(),
+                "--config".to_owned(),
+                "prod/bridge.toml".to_owned(),
+                "--path".to_owned(),
+                "C:/work/app".to_owned(),
+            ])
+            .expect("config workspace upsert should parse"),
+            CliCommand::Config(ConfigCommand::WorkspaceUpsert {
+                config_path: PathBuf::from("prod/bridge.toml"),
+                workspace_path: PathBuf::from("C:/work/app"),
+            })
+        );
     }
 
     #[test]

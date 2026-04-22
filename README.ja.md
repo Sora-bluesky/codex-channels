@@ -60,6 +60,7 @@ Telegram bot を作る前に試す場合は、
 
 ```text
 /remotty-configure
+/remotty-use-this-project
 /remotty-start
 /remotty-access-pair <code>
 /remotty-policy-allowlist

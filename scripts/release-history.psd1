@@ -293,5 +293,16 @@
                 "Split long Telegram replies into message-sized chunks when Codex returns a large answer."
             )
         }
+        @{
+            Version = "0.2.7"
+            Commit = "5b2dd7c2962d64696c3c5898e7965ffddbab04f5"
+            Title = "Codex App project registration"
+            Notes = @(
+                "Added a config workspace upsert command that registers the current project without hand-editing bridge.toml."
+                "Added a remotty plugin command for saving the current Codex App project as the default workspace."
+                "Stopped bridge startup when the starter workspace is still unconfigured."
+                "Reworked the Telegram quickstart around opening the target project before configuring remotty."
+            )
+        }
     )
 }

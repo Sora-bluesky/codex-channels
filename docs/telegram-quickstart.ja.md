@@ -25,39 +25,37 @@ PowerShell で実行します。
 npm install -g remotty
 ```
 
-インストール先のフォルダを開きます。
+インストール先を確認します。
 
 ```powershell
 $remottyRoot = Join-Path (npm root -g) "remotty"
-Set-Location $remottyRoot
 ```
 
-設定ファイルをコピーします。
+## 2. 作業したいプロジェクトを開く
 
-```powershell
-$configDir = Join-Path $env:APPDATA "remotty"
-New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-Copy-Item -Force .\bridge.toml (Join-Path $configDir "bridge.toml")
-$configPath = Join-Path $configDir "bridge.toml"
+Codex App で、Telegram から続けたいプロジェクトを開きます。
+毎回同じプロジェクトを使う必要はありません。
+
+## 3. ローカルプラグインを入れる
+
+Codex App の Plugins 画面で次を行います。
+
+1. `$remottyRoot` 配下の `.agents/plugins/marketplace.json` を追加します。
+2. `remotty` というプラグインを入れます。
+3. Plugins 画面に `remotty` が表示されることを確認します。
+
+## 4. このプロジェクトを登録する
+
+Codex App で実行します。
+
+```text
+/remotty-use-this-project
 ```
 
-## 2. プロジェクトフォルダを指定する
+このコマンドは、開いているプロジェクトを `%APPDATA%\remotty` の設定へ保存します。
+プロジェクトのリポジトリには書き込みません。
 
-`%APPDATA%\remotty\bridge.toml` を開きます。
-
-次の2行を、Codex に作業させたいプロジェクトへ変えます。
-
-```toml
-path = "C:/Users/you/Documents/project"
-writable_roots = ["C:/Users/you/Documents/project"]
-```
-
-Windows のパスは `/` で書くと安全です。
-
-通常の設定では、ほかの項目を変更する必要はありません。
-同梱の設定は、Codex スレッドへ渡す形になっています。
-
-## 3. Telegram bot を作る
+## 5. Telegram bot を作る
 
 1. Telegram で `@BotFather` を開きます。
 2. `/newbot` を送ります。
@@ -67,17 +65,7 @@ Windows のパスは `/` で書くと安全です。
 
 token をチャット、スクリーンショット、issue、PR に貼らないでください。
 
-## 4. ローカルプラグインを入れる
-
-Codex App で `remotty` のパッケージフォルダを開きます。
-
-Plugins 画面で次を行います。
-
-1. `.agents/plugins/marketplace.json` を追加します。
-2. `remotty` というプラグインを入れます。
-3. Plugins 画面に `remotty` が表示されることを確認します。
-
-## 5. bot token を保存する
+## 6. bot token を保存する
 
 Codex App で実行します。
 
@@ -88,7 +76,7 @@ Codex App で実行します。
 表示に従って token を貼ります。
 このコマンドは token を再表示せず、Windows の保護領域へ保存します。
 
-## 6. ブリッジを起動する
+## 7. ブリッジを起動する
 
 Codex App で実行します。
 
@@ -99,7 +87,7 @@ Codex App で実行します。
 Telegram から使う間は、ブリッジを起動したままにします。
 止まっていると bot は返信できません。
 
-## 7. Telegram をペアリングする
+## 8. Telegram をペアリングする
 
 Telegram の private chat で、bot へ任意のメッセージを送ります。
 
@@ -118,7 +106,7 @@ Codex App で実行します。
 
 これで、他の Telegram ユーザーが手元の Codex を操作できなくなります。
 
-## 8. Codex スレッドを選ぶ
+## 9. Codex スレッドを選ぶ
 
 Codex App で実行します。
 
@@ -136,7 +124,7 @@ Telegram から続けたいスレッドを選びます。
 対応付けは `%APPDATA%\remotty` へ保存します。
 プロジェクトのリポジトリには書き込みません。
 
-## 9. テストメッセージを送る
+## 10. テストメッセージを送る
 
 Telegram で次を送ります。
 

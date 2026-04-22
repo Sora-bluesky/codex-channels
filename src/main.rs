@@ -3,9 +3,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use remotty::cli::{
-    CliCommand, DemoCommand, SecretCommand, ServiceCommand, TelegramCommand, parse_args,
+    CliCommand, ConfigCommand, DemoCommand, SecretCommand, ServiceCommand, TelegramCommand,
+    parse_args,
 };
 use remotty::config::{Config, RunMode};
+use remotty::config_workspace;
 use remotty::demo_fakechat;
 use remotty::engine;
 use remotty::live_smoke::{self, SmokeScenario};
@@ -18,6 +20,19 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<()> {
     match parse_args(std::env::args().skip(1))? {
         CliCommand::Run { config_path } => run_bridge(config_path, false).await,
+        CliCommand::Config(ConfigCommand::WorkspaceUpsert {
+            config_path,
+            workspace_path,
+        }) => {
+            let result = config_workspace::upsert_workspace(config_path, workspace_path)?;
+            println!(
+                "workspace `{}` saved in {} for {}",
+                result.workspace_id,
+                result.config_path.display(),
+                config_workspace::render_workspace_path(&result.workspace_path)
+            );
+            Ok(())
+        }
         CliCommand::Demo(DemoCommand::Fakechat(options)) => {
             demo_fakechat::run_fakechat(options).await
         }
@@ -136,6 +151,7 @@ fn init_tracing() {
 
 async fn run_bridge(config_path: PathBuf, force_service_mode: bool) -> Result<()> {
     let config = Config::load(&config_path)?;
+    config_workspace::ensure_default_workspace_is_ready(&config)?;
     ensure_dirs(&config)?;
     init_tracing();
 
