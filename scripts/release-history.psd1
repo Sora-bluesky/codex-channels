@@ -251,7 +251,7 @@
         }
         @{
             Version = "0.2.3"
-            Commit = "pending"
+            Commit = "1a3b628db78fe136a5116cecd75db1e0cd0a191d"
             Title = "Permission relay and worktree safety"
             Notes = @(
                 "Kept app-server permission requests relayed to Telegram."
