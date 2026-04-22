@@ -47,6 +47,8 @@ It is saved in Windows protected storage.
 Run `/remotty-use-this-project` while the target project is open.
 `/remotty-configure` and `/remotty-start` do not write to the repository.
 For the clearest setup, keep using the same project while you run them.
+`remotty` does not create files in the project root.
+In normal use, it does not add anything to commit.
 
 ## How Often Each Step Is Needed
 
@@ -124,6 +126,8 @@ remotty config workspace upsert --config $configPath --path (Get-Location).Path
 
 This saves the project to the config under `%APPDATA%\remotty`.
 It does not write files into your project repository.
+It also does not create `.remotty` or other files in the project root.
+If you want to verify that, run `git status`.
 
 ## 5. Prepare a Telegram Bot (Once)
 

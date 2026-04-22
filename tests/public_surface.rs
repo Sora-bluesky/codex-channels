@@ -120,6 +120,7 @@ fn public_docs_explain_thread_setup_and_advanced_mode() -> Result<()> {
     assert!(quickstart.contains("How Often Each Step Is Needed"));
     assert!(quickstart.contains("Do these when you use a new project"));
     assert!(quickstart.contains("Do this for each Telegram chat"));
+    assert!(quickstart.contains("does not create files in the project root"));
     assert!(!quickstart.contains("writable_roots"));
     assert!(!quickstart.contains("path = \"C:/Users/you/Documents/project\""));
     assert!(!quickstart.contains(".agents/plugins/marketplace.json"));
@@ -134,6 +135,7 @@ fn public_docs_explain_thread_setup_and_advanced_mode() -> Result<()> {
     assert!(quickstart_ja.contains("手順の分け方"));
     assert!(quickstart_ja.contains("新しいプロジェクトを使う時"));
     assert!(quickstart_ja.contains("Telegram チャットごと"));
+    assert!(quickstart_ja.contains("プロジェクトのルートに"));
     assert!(!quickstart_ja.contains("writable_roots"));
     assert!(!quickstart_ja.contains("path = \"C:/Users/you/Documents/project\""));
     assert!(!quickstart_ja.contains(".agents/plugins/marketplace.json"));

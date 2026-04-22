@@ -46,6 +46,8 @@ Windows の保護領域へ保存します。
 `/remotty-use-this-project` は、対象プロジェクトを開いた状態で実行します。
 `/remotty-configure` と `/remotty-start` は、リポジトリへ書き込みません。
 ただし、迷わないために同じプロジェクトで続けて実行してください。
+プロジェクトのルートに `remotty` 用のファイルは作りません。
+そのため、通常はコミット対象物も増えません。
 
 ## 手順の分け方
 
@@ -123,6 +125,8 @@ remotty config workspace upsert --config $configPath --path (Get-Location).Path
 
 この操作は、プロジェクトを `%APPDATA%\remotty` の設定へ保存します。
 プロジェクトのリポジトリには書き込みません。
+プロジェクトのルートにも、`.remotty` などのファイルは作りません。
+コミット対象物が増えないことを確認したい場合は、`git status` を見てください。
 
 ## 5. Telegram bot を用意する（初回だけ）
 
