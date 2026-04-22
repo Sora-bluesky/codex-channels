@@ -58,6 +58,14 @@ In the Codex App Plugins view:
 2. Install the plugin named `remotty`.
 3. Confirm that `remotty` appears in the Plugins view.
 
+After selecting the local marketplace, `remotty` appears in the plugin list.
+
+![Codex plugin list with the local remotty marketplace selected](assets/quickstart/codex-plugin-marketplace-select.png)
+
+Click the add button, then confirm the install dialog.
+
+![Codex plugin install dialog for remotty](assets/quickstart/codex-plugin-install-remotty.png)
+
 Codex CLI users can skip this step.
 Use the PowerShell commands shown below instead.
 

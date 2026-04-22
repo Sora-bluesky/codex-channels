@@ -57,6 +57,14 @@ Plugins 画面で次を行います。
 2. `remotty` というプラグインを入れます。
 3. Plugins 画面に `remotty` が表示されることを確認します。
 
+ローカルの marketplace を選ぶと、一覧に `remotty` が出ます。
+
+![Codex のプラグイン一覧で remotty のローカル marketplace を選ぶ](assets/quickstart/codex-plugin-marketplace-select.png)
+
+追加ボタンを押し、インストール確認を進めます。
+
+![Codex の remotty プラグインインストール確認画面](assets/quickstart/codex-plugin-install-remotty.png)
+
 Codex CLI だけで使う場合は、この手順を飛ばせます。
 以降にある PowerShell のコマンドを使ってください。
 
