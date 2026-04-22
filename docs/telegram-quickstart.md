@@ -35,6 +35,20 @@ $configPath = Join-Path $env:APPDATA "remotty\bridge.toml"
 
 The PowerShell examples below reuse `$configPath`.
 
+## Where To Type Commands And Where Data Is Stored
+
+Type Codex App `/remotty-...` commands in the Codex App chat box.
+Do not type those commands in PowerShell.
+This guide explicitly says when a command goes to Telegram.
+
+The bot token is not saved in your project repository.
+It is saved in Windows protected storage.
+`remotty` config and runtime state are saved under `%APPDATA%\remotty`.
+
+Run `/remotty-use-this-project` while the target project is open.
+`/remotty-configure` and `/remotty-start` do not write to the repository.
+For the clearest setup, keep using the same project while you run them.
+
 ## 2. Open or Enter Your Project
 
 Use the project you want to continue from Telegram.
@@ -71,7 +85,8 @@ Use the PowerShell commands shown below instead.
 
 ## 4. Register This Project
 
-Codex App users run:
+Codex App users type this in the chat box.
+Run this one while the target project is open:
 
 ```text
 /remotty-use-this-project
@@ -98,7 +113,8 @@ Do not post the token in chat, screenshots, issues, or pull requests.
 
 ## 6. Store the Bot Token
 
-Codex App users run:
+Codex App users type this in the chat box.
+This does not save the token in the open repository:
 
 ```text
 /remotty-configure
@@ -113,10 +129,14 @@ remotty telegram configure --config $configPath
 Paste the token when prompted.
 The command stores it in Windows protected storage.
 It does not print the token back.
+The storage is tied to your Windows user.
+It is reused even when you work in another project.
 
 ## 7. Start the Bridge
 
-Codex App users run:
+Codex App users type this in the chat box.
+Startup uses `%APPDATA%\remotty\bridge.toml`.
+It does not put runtime files in the open repository:
 
 ```text
 /remotty-start

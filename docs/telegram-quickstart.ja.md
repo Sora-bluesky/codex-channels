@@ -34,6 +34,20 @@ $configPath = Join-Path $env:APPDATA "remotty\bridge.toml"
 
 以降の PowerShell 例では、`$configPath` を使います。
 
+## 入力場所と保存先
+
+Codex App 用の `/remotty-...` コマンドは、Codex App のチャット欄へ入力します。
+PowerShell へ入力するコマンドではありません。
+Telegram へ入力する場合は、この手順内で明示します。
+
+bot token は、プロジェクトのリポジトリへ保存しません。
+Windows の保護領域へ保存します。
+`remotty` の設定と状態は `%APPDATA%\remotty` 配下へ保存します。
+
+`/remotty-use-this-project` は、対象プロジェクトを開いた状態で実行します。
+`/remotty-configure` と `/remotty-start` は、リポジトリへ書き込みません。
+ただし、迷わないために同じプロジェクトで続けて実行してください。
+
 ## 2. 作業したいプロジェクトへ入る
 
 Telegram から続けたいプロジェクトを使います。
@@ -70,7 +84,8 @@ Codex CLI だけで使う場合は、この手順を飛ばせます。
 
 ## 4. このプロジェクトを登録する
 
-Codex App では、次を実行します。
+Codex App では、チャット欄へ次を入力します。
+このコマンドだけは、対象プロジェクトを開いた状態で実行します。
 
 ```text
 /remotty-use-this-project
@@ -97,7 +112,8 @@ token をチャット、スクリーンショット、issue、PR に貼らない
 
 ## 6. bot token を保存する
 
-Codex App では、次を実行します。
+Codex App では、チャット欄へ次を入力します。
+この操作は、今開いているリポジトリへ token を保存しません。
 
 ```text
 /remotty-configure
@@ -111,10 +127,14 @@ remotty telegram configure --config $configPath
 
 表示に従って token を貼ります。
 このコマンドは token を再表示せず、Windows の保護領域へ保存します。
+保存先は Windows ユーザーごとの保護領域です。
+プロジェクトを変えても、同じ Windows ユーザーなら同じ保存先を使います。
 
 ## 7. ブリッジを起動する
 
-Codex App では、次を実行します。
+Codex App では、チャット欄へ次を入力します。
+起動時は `%APPDATA%\remotty\bridge.toml` の設定を使います。
+今開いているリポジトリへ状態ファイルは置きません。
 
 ```text
 /remotty-start
