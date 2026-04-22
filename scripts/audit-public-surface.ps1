@@ -90,6 +90,43 @@ foreach ($item in $forbiddenPresentAnywhere) {
     }
 }
 
+function Assert-FileContains {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Needle
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $failures.Add("missing public doc: $Path") | Out-Null
+        return
+    }
+
+    $content = Get-Content -LiteralPath $Path -Raw
+    if (-not $content.Contains($Needle)) {
+        $failures.Add("public doc $Path must mention: $Needle") | Out-Null
+    }
+}
+
+Assert-FileContains -Path 'README.md' -Needle 'saved Codex thread'
+Assert-FileContains -Path 'README.md' -Needle 'codex app-server'
+Assert-FileContains -Path 'README.md' -Needle 'codex.transport = "app_server"'
+Assert-FileContains -Path 'README.md' -Needle 'Migration From v0.1'
+Assert-FileContains -Path 'README.ja.md' -Needle '保存済み Codex スレッド'
+Assert-FileContains -Path 'README.ja.md' -Needle 'codex app-server'
+Assert-FileContains -Path 'README.ja.md' -Needle 'codex.transport = "app_server"'
+Assert-FileContains -Path 'README.ja.md' -Needle 'v0.1 から v0.2 への移行'
+Assert-FileContains -Path 'docs/telegram-quickstart.md' -Needle '/remotty-sessions <thread_id>'
+Assert-FileContains -Path 'docs/telegram-quickstart.md' -Needle 'does not type into the open Codex App window'
+Assert-FileContains -Path 'docs/telegram-quickstart.ja.md' -Needle '/remotty-sessions <thread_id>'
+Assert-FileContains -Path 'docs/telegram-quickstart.ja.md' -Needle '開いている Codex App 画面へキー入力するものではありません'
+Assert-FileContains -Path 'docs/migration-v0.1-to-v0.2.md' -Needle 'separate-run bridge'
+Assert-FileContains -Path 'docs/migration-v0.1-to-v0.2.md' -Needle 'saved-thread relay'
+Assert-FileContains -Path 'docs/migration-v0.1-to-v0.2.ja.md' -Needle '別実行のブリッジ'
+Assert-FileContains -Path 'docs/migration-v0.1-to-v0.2.ja.md' -Needle '保存済みスレッド'
+
 if ($failures.Count -gt 0) {
     [Console]::Error.WriteLine("public surface audit failed:`n- " + ($failures -join "`n- "))
     exit 1

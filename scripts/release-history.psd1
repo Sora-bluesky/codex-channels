@@ -260,5 +260,16 @@
                 "Warned before relaying work into a Git repository with uncommitted changes."
             )
         }
+        @{
+            Version = "0.2.4"
+            Commit = "897deaa418617b14ea26c68cea50b8692f92572d"
+            Title = "Saved-thread setup documentation"
+            Notes = @(
+                "Reworked the README files around returning to a saved Codex thread from Telegram."
+                "Updated the Telegram quickstart guides for app-server setup, pairing, thread selection, and approvals."
+                "Added migration notes for moving from the v0.1 separate-run bridge to the v0.2 saved-thread relay."
+                "Added public-surface checks that keep the saved-thread setup and migration docs present before release."
+            )
+        }
     )
 }
