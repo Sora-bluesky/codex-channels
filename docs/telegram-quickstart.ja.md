@@ -25,10 +25,9 @@ PowerShell で実行します。
 npm install -g remotty
 ```
 
-インストール先を確認します。
+設定ファイルの場所を変数に入れます。
 
 ```powershell
-$remottyRoot = Join-Path (npm root -g) "remotty"
 $configPath = Join-Path $env:APPDATA "remotty\bridge.toml"
 ```
 
@@ -48,7 +47,28 @@ Windows の保護領域へ保存します。
 `/remotty-configure` と `/remotty-start` は、リポジトリへ書き込みません。
 ただし、迷わないために同じプロジェクトで続けて実行してください。
 
-## 2. 作業したいプロジェクトへ入る
+## 2. ローカルプラグインを入れる
+
+Codex App では、ローカルプラグインを使えます。
+
+Plugins 画面で次を行います。
+
+1. プラグイン元の選択欄で `remotty local plugins` を選びます。
+2. 一覧の `remotty` で追加ボタンを押します。
+3. インストール確認画面で確定します。
+
+`remotty local plugins` を選ぶと、一覧に `remotty` が出ます。
+
+![Codex のプラグイン一覧で remotty local plugins を選ぶ](assets/quickstart/codex-plugin-marketplace-select.png)
+
+追加ボタンを押し、インストール確認を進めます。
+
+![Codex の remotty プラグインインストール確認画面](assets/quickstart/codex-plugin-install-remotty.png)
+
+Codex CLI だけで使う場合は、この手順を飛ばせます。
+以降にある PowerShell のコマンドを使ってください。
+
+## 3. 作業したいプロジェクトへ入る
 
 Telegram から続けたいプロジェクトを使います。
 毎回同じプロジェクトを使う必要はありません。
@@ -60,27 +80,6 @@ Codex CLI を使う場合は、PowerShell でフォルダへ入ります。
 ```powershell
 Set-Location C:\path\to\your\project
 ```
-
-## 3. ローカルプラグインを入れる
-
-Codex App では、ローカルプラグインを使えます。
-
-Plugins 画面で次を行います。
-
-1. `$remottyRoot` 配下の `.agents/plugins/marketplace.json` を追加します。
-2. `remotty` というプラグインを入れます。
-3. Plugins 画面に `remotty` が表示されることを確認します。
-
-ローカルの marketplace を選ぶと、一覧に `remotty` が出ます。
-
-![Codex のプラグイン一覧で remotty のローカル marketplace を選ぶ](assets/quickstart/codex-plugin-marketplace-select.png)
-
-追加ボタンを押し、インストール確認を進めます。
-
-![Codex の remotty プラグインインストール確認画面](assets/quickstart/codex-plugin-install-remotty.png)
-
-Codex CLI だけで使う場合は、この手順を飛ばせます。
-以降にある PowerShell のコマンドを使ってください。
 
 ## 4. このプロジェクトを登録する
 
