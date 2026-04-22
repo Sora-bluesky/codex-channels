@@ -46,6 +46,8 @@ Windows の保護領域へ保存します。
 `/remotty-use-this-project` は、対象プロジェクトを開いた状態で実行します。
 `/remotty-configure` と `/remotty-start` は、リポジトリへ書き込みません。
 ただし、迷わないために同じプロジェクトで続けて実行してください。
+プロジェクトのルートに `remotty` 用のファイルは作りません。
+そのため、通常はコミット対象物も増えません。
 
 ## 手順の分け方
 
@@ -123,6 +125,8 @@ remotty config workspace upsert --config $configPath --path (Get-Location).Path
 
 この操作は、プロジェクトを `%APPDATA%\remotty` の設定へ保存します。
 プロジェクトのリポジトリには書き込みません。
+プロジェクトのルートにも、`.remotty` などのファイルは作りません。
+コミット対象物が増えないことを確認したい場合は、`git status` を見てください。
 
 ## 5. Telegram bot を用意する（初回だけ）
 
@@ -262,6 +266,41 @@ Codex が承認を求めると、`remotty` は Telegram へ中継します。
 承認結果は同じ Codex の処理へ返ります。
 
 ## 困った時
+
+### 安全性の Q&A
+
+> Q. `/remotty-use-this-project` は、プロジェクトにファイルを作りますか?
+>
+> A. 作りません。設定は `%APPDATA%\remotty\bridge.toml` へ保存します。プロジェクトのルートに `.remotty` などは作りません。気になる場合は、実行後に `git status` を確認してください。
+
+> Q. bot token はどこへ保存されますか?
+>
+> A. Windows の保護領域へ保存します。プロジェクトのリポジトリ、GitHub、Telegram のチャットへは保存しません。
+
+> Q. bot token は OpenAI や外部サーバへ送られますか?
+>
+> A. `remotty` は、Telegram API へ接続するために token を使います。OpenAI へ token を送る必要はありません。issue、PR、スクリーンショットには token を貼らないでください。
+
+> Q. 公開 webhook サーバを立てますか?
+>
+> A. 立てません。通常は Windows PC から Telegram を polling します。ルーターのポート開放も不要です。
+
+> Q. 誰でも私の Codex を操作できますか?
+>
+> A. できません。ペアリングした送信者だけを許可します。ペアリング後は `/remotty-policy-allowlist` を実行してください。
+> これにより、設定済みの送信者だけが操作できます。
+
+> Q. Telegram から承認操作を押しても安全ですか?
+>
+> A. 承認できる人は、許可済み送信者だけです。ただし、承認は手元の Codex 作業を進めます。信頼できる自分のアカウントだけを許可してください。
+
+> Q. 複数プロジェクトで同じ bot を使えますか?
+>
+> A. 使えます。bot token は Windows ユーザーごとに保存します。プロジェクトごとの登録と、Telegram チャットごとのスレッド対応付けは別です。
+
+> Q. token が漏れたかもしれない時は?
+>
+> A. Telegram の `@BotFather` で token を再発行してください。その後、`/remotty-configure` で新しい token を保存します。
 
 ### bot が返信しない
 

@@ -47,6 +47,8 @@ It is saved in Windows protected storage.
 Run `/remotty-use-this-project` while the target project is open.
 `/remotty-configure` and `/remotty-start` do not write to the repository.
 For the clearest setup, keep using the same project while you run them.
+`remotty` does not create files in the project root.
+In normal use, it does not add anything to commit.
 
 ## How Often Each Step Is Needed
 
@@ -124,6 +126,8 @@ remotty config workspace upsert --config $configPath --path (Get-Location).Path
 
 This saves the project to the config under `%APPDATA%\remotty`.
 It does not write files into your project repository.
+It also does not create `.remotty` or other files in the project root.
+If you want to verify that, run `git status`.
 
 ## 5. Prepare a Telegram Bot (Once)
 
@@ -264,6 +268,41 @@ You can also type:
 The decision is returned to the same Codex turn.
 
 ## Troubleshooting
+
+### Security Q&A
+
+> Q. Does `/remotty-use-this-project` create files in my project?
+>
+> A. No. It saves configuration to `%APPDATA%\remotty\bridge.toml`. It does not create `.remotty` or other files in the project root. If you want to verify this, run `git status` after the command.
+
+> Q. Where is the bot token stored?
+>
+> A. It is stored in Windows protected storage. It is not stored in your project repository, GitHub, or a Telegram chat.
+
+> Q. Is the bot token sent to OpenAI or another public server?
+>
+> A. `remotty` uses the token to connect to the Telegram API. It does not need to send the token to OpenAI. Do not paste the token into issues, pull requests, or screenshots.
+
+> Q. Does `remotty` expose a public webhook server?
+>
+> A. No. The normal setup polls Telegram from your Windows PC. You do not need to open a router port.
+
+> Q. Can anyone control my Codex session?
+>
+> A. No. Only paired senders are allowed. After pairing, run `/remotty-policy-allowlist`.
+> This keeps access limited to configured senders.
+
+> Q. Is approving from Telegram safe?
+>
+> A. Only allowed senders can approve. Approval still continues local Codex work, so allow only Telegram accounts you trust.
+
+> Q. Can I use the same bot across projects?
+>
+> A. Yes. The bot token is stored for your Windows user. Project registration and Telegram chat bindings are separate.
+
+> Q. What if the token may have leaked?
+>
+> A. Regenerate it with `@BotFather`. Then save the new token with `/remotty-configure`.
 
 ### The Bot Does Not Reply
 
