@@ -5,12 +5,12 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, timeout};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::codex::{CodexOutcome, CodexRequest};
+use crate::codex::{ActiveAppServerTurn, CodexFollowupRequest, CodexOutcome, CodexRequest};
 use crate::config::{CodexConfig, WorkspaceConfig};
 use crate::store::{ApprovalRequestKind, ApprovalRequestRecord};
 
@@ -80,7 +80,8 @@ impl AppServerClient {
         config: &CodexConfig,
         workspace: &WorkspaceConfig,
         request: CodexRequest,
-        followups: Option<mpsc::UnboundedReceiver<CodexRequest>>,
+        followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
+        turn_sender: Option<mpsc::UnboundedSender<ActiveAppServerTurn>>,
     ) -> Result<CodexOutcome> {
         self.ensure_initialized().await?;
         let mut params = json!({
@@ -95,8 +96,15 @@ impl AppServerClient {
         add_model_param(&mut params, config);
         let thread = self.call("thread/start", params).await?;
         let thread_id = thread_result_thread_id(&thread)?;
-        self.start_turn_on_thread(config, workspace, &thread_id, request, followups)
-            .await
+        self.start_turn_on_thread(
+            config,
+            workspace,
+            &thread_id,
+            request,
+            followups,
+            turn_sender,
+        )
+        .await
     }
 
     pub async fn resume_turn(
@@ -105,7 +113,8 @@ impl AppServerClient {
         workspace: &WorkspaceConfig,
         thread_id: &str,
         request: CodexRequest,
-        followups: Option<mpsc::UnboundedReceiver<CodexRequest>>,
+        followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
+        turn_sender: Option<mpsc::UnboundedSender<ActiveAppServerTurn>>,
     ) -> Result<CodexOutcome> {
         self.ensure_initialized().await?;
         let mut params = json!({
@@ -118,8 +127,15 @@ impl AppServerClient {
         });
         add_model_param(&mut params, config);
         self.call("thread/resume", params).await?;
-        self.start_turn_on_thread(config, workspace, thread_id, request, followups)
-            .await
+        self.start_turn_on_thread(
+            config,
+            workspace,
+            thread_id,
+            request,
+            followups,
+            turn_sender,
+        )
+        .await
     }
 
     pub async fn resolve_approval(
@@ -161,7 +177,8 @@ impl AppServerClient {
         workspace: &WorkspaceConfig,
         thread_id: &str,
         request: CodexRequest,
-        followups: Option<mpsc::UnboundedReceiver<CodexRequest>>,
+        followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
+        turn_sender: Option<mpsc::UnboundedSender<ActiveAppServerTurn>>,
     ) -> Result<CodexOutcome> {
         let mut params = json!({
             "threadId": thread_id,
@@ -174,6 +191,32 @@ impl AppServerClient {
         add_model_param(&mut params, config);
         let turn = self.call("turn/start", params).await?;
         let turn_id = turn_result_turn_id(&turn)?;
+        if let Some(sender) = turn_sender {
+            let (ack, ack_receiver) = oneshot::channel();
+            if sender
+                .send(ActiveAppServerTurn {
+                    thread_id: thread_id.to_owned(),
+                    turn_id: turn_id.clone(),
+                    ack,
+                })
+                .is_err()
+            {
+                warn!("active app-server turn persistence channel was closed");
+            } else {
+                match timeout(APP_SERVER_CONTROL_TIMEOUT, ack_receiver).await {
+                    Ok(Ok(Ok(()))) => {}
+                    Ok(Ok(Err(error))) => {
+                        warn!("failed to persist active app-server turn: {error:#}");
+                    }
+                    Ok(Err(_)) => {
+                        warn!("active app-server turn persistence was canceled");
+                    }
+                    Err(_) => {
+                        warn!("active app-server turn persistence timed out");
+                    }
+                }
+            }
+        }
         self.read_until_pause_or_completion(thread_id, &turn_id, followups)
             .await
     }
@@ -232,7 +275,7 @@ impl AppServerClient {
         &mut self,
         thread_id: &str,
         turn_id: &str,
-        mut followups: Option<mpsc::UnboundedReceiver<CodexRequest>>,
+        mut followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
     ) -> Result<CodexOutcome> {
         let mut delta_message = String::new();
         let mut approval_requests = Vec::new();
@@ -242,8 +285,13 @@ impl AppServerClient {
             let message = if let Some(receiver) = followups.as_mut() {
                 tokio::select! {
                     maybe_request = receiver.recv() => {
-                        if let Some(request) = maybe_request {
-                            self.steer_turn(thread_id, turn_id, request).await?;
+                        if let Some(followup) = maybe_request {
+                            let result = self.steer_turn(thread_id, turn_id, followup.request).await;
+                            let ok = result.is_ok();
+                            let _ = followup.ack.send(result);
+                            if !ok {
+                                continue;
+                            }
                         } else {
                             followups = None;
                         }
@@ -359,20 +407,51 @@ impl AppServerClient {
         Ok(String::new())
     }
 
-    async fn steer_turn(
+    pub async fn steer_turn(
         &mut self,
         thread_id: &str,
         turn_id: &str,
         request: CodexRequest,
     ) -> Result<()> {
-        self.send_json_with_timeout(
-            &json!({
-                "method": "turn/steer",
-                "params": turn_steer_params(thread_id, turn_id, request),
-            }),
-            "turn/steer",
-        )
-        .await
+        self.ensure_initialized().await?;
+        self.ensure_turn_accepts_steer(thread_id, turn_id).await?;
+        let response = self
+            .call("turn/steer", turn_steer_params(thread_id, turn_id, request))
+            .await?;
+        assert_turn_steer_accepted(&response)?;
+        Ok(())
+    }
+
+    async fn ensure_turn_accepts_steer(&mut self, thread_id: &str, turn_id: &str) -> Result<()> {
+        let response = self
+            .call(
+                "thread/read",
+                json!({
+                    "threadId": thread_id,
+                    "includeTurns": true,
+                }),
+            )
+            .await?;
+        let turns = response
+            .get("thread")
+            .and_then(|thread| thread.get("turns"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("thread/read missing turns"))?;
+        let turn = turns
+            .iter()
+            .find(|turn| turn.get("id").and_then(Value::as_str) == Some(turn_id))
+            .ok_or_else(|| anyhow!("turn `{turn_id}` was not found in thread `{thread_id}`"))?;
+        let status = turn
+            .get("status")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("turn `{turn_id}` has no status"))?;
+        match status {
+            "in_progress" | "in-progress" | "running" | "pending" => Ok(()),
+            "completed" | "failed" | "cancelled" | "canceled" => {
+                bail!("turn `{turn_id}` is already {status}")
+            }
+            other => bail!("turn `{turn_id}` has unsupported status `{other}`"),
+        }
     }
 
     async fn decline_unknown_server_request(&mut self, message: &Value) -> Result<()> {
@@ -623,6 +702,23 @@ fn turn_steer_params(thread_id: &str, turn_id: &str, request: CodexRequest) -> V
         "expectedTurnId": turn_id,
         "input": request_to_user_inputs(request),
     })
+}
+
+fn assert_turn_steer_accepted(response: &Value) -> Result<()> {
+    for field in ["accepted", "queued", "ok", "success"] {
+        if response.get(field).and_then(Value::as_bool) == Some(false) {
+            bail!("app-server `turn/steer` rejected follow-up");
+        }
+    }
+    if let Some(status) = response.get("status").and_then(Value::as_str) {
+        if matches!(
+            status,
+            "rejected" | "failed" | "error" | "cancelled" | "canceled"
+        ) {
+            bail!("app-server `turn/steer` returned status `{status}`");
+        }
+    }
+    Ok(())
 }
 
 fn turn_result_turn_id(result: &Value) -> Result<String> {
@@ -918,7 +1014,9 @@ mod tests {
     use super::*;
     use crate::config::{CodexConfig, CodexTransport, LaneMode, WorkspaceConfig};
     use crate::store::ApprovalRequestKind;
+    use std::fs;
     use std::path::PathBuf;
+    use tempfile::tempdir;
 
     #[test]
     fn parses_command_approval_request() {
@@ -1394,5 +1492,322 @@ mod tests {
             params["input"][0]["text"],
             Value::String("follow up".to_owned())
         );
+    }
+
+    #[tokio::test]
+    async fn steer_turn_writes_visible_followup_request() {
+        let dir = tempdir().expect("tempdir should be created");
+        let log_path = dir.path().join("app-server.log");
+        let ps1_path = dir.path().join("fake-app-server.ps1");
+        let escaped_log_path = log_path.display().to_string().replace('\'', "''");
+        fs::write(
+            &ps1_path,
+            format!(
+                r#"
+$log = '{escaped_log_path}'
+while ($null -ne ($line = [Console]::In.ReadLine())) {{
+  Add-Content -LiteralPath $log -Value $line
+  $message = $line | ConvertFrom-Json
+  if ($message.method -eq 'thread/read') {{
+    @{{ id = $message.id; result = @{{ thread = @{{ turns = @(@{{ id = 'turn-1'; status = 'in_progress' }}) }} }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }} elseif ($message.method -eq 'turn/steer') {{
+    @{{ id = $message.id; result = @{{ accepted = $true }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }}
+}}
+"#
+            ),
+        )
+        .expect("fake app-server script should write");
+        let mut child = Command::new("pwsh")
+            .args(["-NoProfile", "-File"])
+            .arg(&ps1_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("fake app-server should spawn");
+        let stdin = child.stdin.take().expect("stdin should exist");
+        let stdout = child.stdout.take().expect("stdout should exist");
+        let mut client = AppServerClient {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            backlog: VecDeque::new(),
+            next_request_id: 1,
+            initialized: true,
+        };
+
+        client
+            .steer_turn("thread-1", "turn-1", CodexRequest::new("follow up"))
+            .await
+            .expect("turn steer should write");
+        client
+            .stdin
+            .shutdown()
+            .await
+            .expect("fake app-server stdin should close");
+        let _ = timeout(Duration::from_secs(2), client._child.wait()).await;
+
+        let mut log = String::new();
+        for _ in 0..60 {
+            if let Ok(contents) = fs::read_to_string(&log_path) {
+                log = contents;
+                if log.contains(r#""method":"turn/steer""#) {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(log.contains(r#""method":"turn/steer""#));
+        assert!(log.contains(r#""expectedTurnId":"turn-1""#));
+        assert!(log.contains("follow up"));
+    }
+
+    #[tokio::test]
+    async fn steer_turn_initializes_fresh_app_server_client() {
+        let dir = tempdir().expect("tempdir should be created");
+        let log_path = dir.path().join("app-server.log");
+        let ps1_path = dir.path().join("fake-app-server.ps1");
+        let escaped_log_path = log_path.display().to_string().replace('\'', "''");
+        fs::write(
+            &ps1_path,
+            format!(
+                r#"
+$log = '{escaped_log_path}'
+while ($null -ne ($line = [Console]::In.ReadLine())) {{
+  Add-Content -LiteralPath $log -Value $line
+  $message = $line | ConvertFrom-Json
+  if ($message.method -eq 'initialize') {{
+    @{{ id = $message.id; result = @{{ userAgent = 'Codex/0.118.0' }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }} elseif ($message.method -eq 'thread/read') {{
+    @{{ id = $message.id; result = @{{ thread = @{{ turns = @(@{{ id = 'turn-1'; status = 'in_progress' }}) }} }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }} elseif ($message.method -eq 'turn/steer') {{
+    @{{ id = $message.id; result = @{{ accepted = $true }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }}
+}}
+"#
+            ),
+        )
+        .expect("fake app-server script should write");
+        let mut child = Command::new("pwsh")
+            .args(["-NoProfile", "-File"])
+            .arg(&ps1_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("fake app-server should spawn");
+        let stdin = child.stdin.take().expect("stdin should exist");
+        let stdout = child.stdout.take().expect("stdout should exist");
+        let mut client = AppServerClient {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            backlog: VecDeque::new(),
+            next_request_id: 1,
+            initialized: false,
+        };
+
+        client
+            .steer_turn("thread-1", "turn-1", CodexRequest::new("follow up"))
+            .await
+            .expect("turn steer should initialize and write");
+        client
+            .stdin
+            .shutdown()
+            .await
+            .expect("fake app-server stdin should close");
+        let _ = timeout(Duration::from_secs(2), client._child.wait()).await;
+
+        let log = fs::read_to_string(&log_path).expect("fake app-server log");
+        assert!(log.contains(r#""method":"initialize""#));
+        assert!(log.contains(r#""method":"initialized""#));
+        assert!(log.contains(r#""method":"turn/steer""#));
+    }
+
+    #[tokio::test]
+    async fn steer_turn_rejects_negative_server_response() {
+        let dir = tempdir().expect("tempdir should be created");
+        let log_path = dir.path().join("app-server.log");
+        let ps1_path = dir.path().join("fake-app-server.ps1");
+        let escaped_log_path = log_path.display().to_string().replace('\'', "''");
+        fs::write(
+            &ps1_path,
+            format!(
+                r#"
+$log = '{escaped_log_path}'
+while ($null -ne ($line = [Console]::In.ReadLine())) {{
+  Add-Content -LiteralPath $log -Value $line
+  $message = $line | ConvertFrom-Json
+  if ($message.method -eq 'thread/read') {{
+    @{{ id = $message.id; result = @{{ thread = @{{ turns = @(@{{ id = 'turn-1'; status = 'in_progress' }}) }} }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }} elseif ($message.method -eq 'turn/steer') {{
+    @{{ id = $message.id; result = @{{ accepted = $false }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }}
+}}
+"#
+            ),
+        )
+        .expect("fake app-server script should write");
+        let mut child = Command::new("pwsh")
+            .args(["-NoProfile", "-File"])
+            .arg(&ps1_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("fake app-server should spawn");
+        let stdin = child.stdin.take().expect("stdin should exist");
+        let stdout = child.stdout.take().expect("stdout should exist");
+        let mut client = AppServerClient {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            backlog: VecDeque::new(),
+            next_request_id: 1,
+            initialized: true,
+        };
+
+        client
+            .steer_turn("thread-1", "turn-1", CodexRequest::new("follow up"))
+            .await
+            .expect_err("rejected turn steer should fail");
+        client
+            .stdin
+            .shutdown()
+            .await
+            .expect("fake app-server stdin should close");
+        let _ = timeout(Duration::from_secs(2), client._child.wait()).await;
+
+        let log = fs::read_to_string(&log_path).expect("fake app-server log");
+        assert!(log.contains(r#""method":"turn/steer""#));
+    }
+
+    #[tokio::test]
+    async fn steer_turn_rejects_completed_turn_before_writing_followup() {
+        let dir = tempdir().expect("tempdir should be created");
+        let log_path = dir.path().join("app-server.log");
+        let ps1_path = dir.path().join("fake-app-server.ps1");
+        let escaped_log_path = log_path.display().to_string().replace('\'', "''");
+        fs::write(
+            &ps1_path,
+            format!(
+                r#"
+$log = '{escaped_log_path}'
+while ($null -ne ($line = [Console]::In.ReadLine())) {{
+  Add-Content -LiteralPath $log -Value $line
+  $message = $line | ConvertFrom-Json
+  if ($message.method -eq 'thread/read') {{
+    @{{ id = $message.id; result = @{{ thread = @{{ turns = @(@{{ id = 'turn-1'; status = 'completed' }}) }} }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }}
+}}
+"#
+            ),
+        )
+        .expect("fake app-server script should write");
+        let mut child = Command::new("pwsh")
+            .args(["-NoProfile", "-File"])
+            .arg(&ps1_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("fake app-server should spawn");
+        let stdin = child.stdin.take().expect("stdin should exist");
+        let stdout = child.stdout.take().expect("stdout should exist");
+        let mut client = AppServerClient {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            backlog: VecDeque::new(),
+            next_request_id: 1,
+            initialized: true,
+        };
+
+        client
+            .steer_turn("thread-1", "turn-1", CodexRequest::new("follow up"))
+            .await
+            .expect_err("completed turn should reject follow-up");
+        client
+            .stdin
+            .shutdown()
+            .await
+            .expect("fake app-server stdin should close");
+        let _ = timeout(Duration::from_secs(2), client._child.wait()).await;
+
+        let log = fs::read_to_string(&log_path).expect("fake app-server log");
+        assert!(log.contains(r#""method":"thread/read""#));
+        assert!(!log.contains(r#""method":"turn/steer""#));
+    }
+
+    #[tokio::test]
+    async fn steer_turn_rejects_unknown_turn_status_before_writing_followup() {
+        let dir = tempdir().expect("tempdir should be created");
+        let log_path = dir.path().join("app-server.log");
+        let ps1_path = dir.path().join("fake-app-server.ps1");
+        let escaped_log_path = log_path.display().to_string().replace('\'', "''");
+        fs::write(
+            &ps1_path,
+            format!(
+                r#"
+$log = '{escaped_log_path}'
+while ($null -ne ($line = [Console]::In.ReadLine())) {{
+  Add-Content -LiteralPath $log -Value $line
+  $message = $line | ConvertFrom-Json
+  if ($message.method -eq 'thread/read') {{
+    @{{ id = $message.id; result = @{{ thread = @{{ turns = @(@{{ id = 'turn-1'; status = 'mystery' }}) }} }} }} | ConvertTo-Json -Compress -Depth 10 -WarningAction SilentlyContinue
+    [Console]::Out.Flush()
+  }}
+}}
+"#
+            ),
+        )
+        .expect("fake app-server script should write");
+        let mut child = Command::new("pwsh")
+            .args(["-NoProfile", "-File"])
+            .arg(&ps1_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("fake app-server should spawn");
+        let stdin = child.stdin.take().expect("stdin should exist");
+        let stdout = child.stdout.take().expect("stdout should exist");
+        let mut client = AppServerClient {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            backlog: VecDeque::new(),
+            next_request_id: 1,
+            initialized: true,
+        };
+
+        client
+            .steer_turn("thread-1", "turn-1", CodexRequest::new("follow up"))
+            .await
+            .expect_err("unknown turn status should reject follow-up");
+        client
+            .stdin
+            .shutdown()
+            .await
+            .expect("fake app-server stdin should close");
+        let _ = timeout(Duration::from_secs(2), client._child.wait()).await;
+
+        let log = fs::read_to_string(&log_path).expect("fake app-server log");
+        assert!(log.contains(r#""method":"thread/read""#));
+        assert!(!log.contains(r#""method":"turn/steer""#));
     }
 }

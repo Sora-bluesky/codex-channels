@@ -326,12 +326,12 @@ The decision is returned to the same Codex turn.
 
 > Q. What happens if I send another message while Codex is still working?
 >
-> A. Text messages are queued if the bridge still has the running turn in view.
-> Codex receives the queued text after the current step is ready for follow-up input.
-> Attachments are not queued while a turn is running.
+> A. Text messages are sent as pending follow-up input if the bridge still sees the running turn.
+> Codex treats the text as input that follows the current work.
+> Attachments cannot become pending input while a turn is running.
 > Send attachments after the current turn finishes.
-> If the bridge was restarted, the old turn may no longer be active.
-> In that case, `remotty` recovers and starts a new request in the selected thread.
+> If the bridge was restarted, the running turn may not be recoverable.
+> In that case, send the message again after the current turn finishes.
 
 > Q. What if the token may have leaked?
 >

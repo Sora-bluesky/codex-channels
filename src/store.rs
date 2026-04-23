@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter, types::Type};
 use uuid::Uuid;
@@ -74,6 +74,7 @@ pub struct LaneRecord {
     pub mode: LaneMode,
     pub state: LaneState,
     pub codex_session_id: Option<String>,
+    pub active_turn_id: Option<String>,
     pub extra_turn_budget: i64,
     pub waiting_since_ms: Option<i64>,
 }
@@ -425,6 +426,12 @@ impl Store {
                 "approval_requests",
                 "transport_request_id",
                 "ALTER TABLE approval_requests ADD COLUMN transport_request_id TEXT NOT NULL DEFAULT ''",
+            )?;
+            ensure_column_exists(
+                conn,
+                "lanes",
+                "active_turn_id",
+                "ALTER TABLE lanes ADD COLUMN active_turn_id TEXT",
             )
         })?;
         Ok(())
@@ -700,6 +707,7 @@ impl Store {
             mode,
             state: LaneState::Idle,
             codex_session_id: None,
+            active_turn_id: None,
             extra_turn_budget,
             waiting_since_ms: None,
         };
@@ -708,9 +716,9 @@ impl Store {
                 r#"
                 INSERT INTO lanes(
                     lane_id, chat_id, thread_key, workspace_id, mode, state,
-                    codex_session_id, extra_turn_budget, waiting_since_ms
+                    codex_session_id, active_turn_id, extra_turn_budget, waiting_since_ms
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 "#,
                 params![
                     lane.lane_id,
@@ -720,6 +728,7 @@ impl Store {
                     mode_to_str(lane.mode),
                     lane.state.as_str(),
                     lane.codex_session_id,
+                    lane.active_turn_id,
                     lane.extra_turn_budget,
                     lane.waiting_since_ms,
                 ],
@@ -733,7 +742,7 @@ impl Store {
             conn.query_row(
                 r#"
                 SELECT lane_id, chat_id, thread_key, workspace_id, mode, state,
-                       codex_session_id, extra_turn_budget, waiting_since_ms
+                       codex_session_id, active_turn_id, extra_turn_budget, waiting_since_ms
                 FROM lanes
                 WHERE chat_id = ?1 AND thread_key = ?2
                 "#,
@@ -759,8 +768,9 @@ impl Store {
                             )
                         })?,
                         codex_session_id: row.get(6)?,
-                        extra_turn_budget: row.get(7)?,
-                        waiting_since_ms: row.get(8)?,
+                        active_turn_id: row.get(7)?,
+                        extra_turn_budget: row.get(8)?,
+                        waiting_since_ms: row.get(9)?,
                     })
                 },
             )
@@ -785,12 +795,47 @@ impl Store {
                 UPDATE lanes
                 SET state = ?2,
                     codex_session_id = COALESCE(?3, codex_session_id),
-                    waiting_since_ms = ?4
+                    waiting_since_ms = ?4,
+                    active_turn_id = CASE WHEN ?2 = 'running' THEN active_turn_id ELSE NULL END
                 WHERE lane_id = ?1
                 "#,
                 params![lane_id, state.as_str(), codex_session_id, waiting_since_ms],
             )
         })?;
+        Ok(())
+    }
+
+    pub fn update_lane_active_turn(
+        &self,
+        lane_id: &str,
+        run_id: &str,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<()> {
+        let updated = self.with_conn(|conn| {
+            conn.execute(
+                r#"
+                UPDATE lanes
+                SET state = 'running',
+                    codex_session_id = ?3,
+                    active_turn_id = ?4,
+                    waiting_since_ms = NULL
+                WHERE lane_id = ?1
+                  AND state = 'running'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM runs
+                    WHERE runs.run_id = ?2
+                      AND runs.lane_id = lanes.lane_id
+                      AND runs.ended_at_ms IS NULL
+                  )
+                "#,
+                params![lane_id, run_id, thread_id, turn_id],
+            )
+        })?;
+        if updated == 0 {
+            bail!("lane `{lane_id}` is no longer running for run `{run_id}`");
+        }
         Ok(())
     }
 
@@ -801,6 +846,7 @@ impl Store {
                 UPDATE lanes
                 SET state = 'idle',
                     codex_session_id = NULL,
+                    active_turn_id = NULL,
                     waiting_since_ms = NULL
                 WHERE lane_id = ?1
                 "#,
@@ -817,6 +863,7 @@ impl Store {
                 UPDATE lanes
                 SET state = 'failed',
                     codex_session_id = NULL,
+                    active_turn_id = NULL,
                     waiting_since_ms = NULL
                 WHERE lane_id = ?1
                 "#,
@@ -854,6 +901,7 @@ impl Store {
                 SET workspace_id = ?2,
                     state = 'idle',
                     codex_session_id = NULL,
+                    active_turn_id = NULL,
                     waiting_since_ms = NULL
                 WHERE lane_id = ?1
                 "#,
@@ -1705,6 +1753,7 @@ impl Store {
                     UPDATE lanes
                     SET state = 'waiting_reply',
                         codex_session_id = NULL,
+                        active_turn_id = NULL,
                         waiting_since_ms = NULL
                     WHERE lane_id = ?1
                       AND state != 'failed'
@@ -1759,6 +1808,7 @@ impl Store {
                 UPDATE lanes
                 SET state = 'failed',
                     codex_session_id = NULL,
+                    active_turn_id = NULL,
                     waiting_since_ms = NULL
                 WHERE lane_id = ?1
                 "#,
@@ -1808,6 +1858,7 @@ impl Store {
                 UPDATE lanes
                 SET state = 'failed',
                     codex_session_id = NULL,
+                    active_turn_id = NULL,
                     waiting_since_ms = NULL
                 WHERE lane_id = ?1
                 "#,
@@ -2455,6 +2506,7 @@ mod tests {
             .expect("lane exists");
         assert_eq!(lane.state, LaneState::Idle);
         assert_eq!(lane.codex_session_id, None);
+        assert_eq!(lane.active_turn_id, None);
         assert_eq!(lane.extra_turn_budget, 2);
         assert_eq!(lane.waiting_since_ms, None);
         assert_eq!(lane.mode, LaneMode::MaxTurns);
@@ -2478,7 +2530,58 @@ mod tests {
             .expect("lane exists");
         assert_eq!(lane.state, LaneState::Failed);
         assert_eq!(lane.codex_session_id, None);
+        assert_eq!(lane.active_turn_id, None);
         assert_eq!(lane.waiting_since_ms, None);
+    }
+
+    #[test]
+    fn update_lane_active_turn_persists_visible_followup_target() {
+        let (_dir, store) = temp_store();
+        let lane = store
+            .get_or_create_lane(44, "dm", "workspace", LaneMode::AwaitReply, 0)
+            .expect("lane");
+        store
+            .update_lane_state(&lane.lane_id, LaneState::Running, Some("thread-1"))
+            .expect("state update");
+        let run = store
+            .insert_run(NewRun {
+                lane_id: lane.lane_id.clone(),
+                run_kind: "telegram".to_owned(),
+            })
+            .expect("run");
+
+        store
+            .update_lane_active_turn(&lane.lane_id, &run.run_id, "thread-1", "turn-1")
+            .expect("active turn should persist");
+
+        let lane = store
+            .find_lane(44, "dm")
+            .expect("query")
+            .expect("lane exists");
+        assert_eq!(lane.state, LaneState::Running);
+        assert_eq!(lane.codex_session_id.as_deref(), Some("thread-1"));
+        assert_eq!(lane.active_turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(lane.waiting_since_ms, None);
+
+        store
+            .update_lane_state(&lane.lane_id, LaneState::WaitingReply, Some("thread-1"))
+            .expect("state update");
+        let lane = store
+            .find_lane(44, "dm")
+            .expect("query")
+            .expect("lane exists");
+        assert_eq!(lane.active_turn_id, None);
+
+        store
+            .update_lane_active_turn(&lane.lane_id, &run.run_id, "thread-2", "turn-2")
+            .expect_err("stale active turn should fail");
+        let lane = store
+            .find_lane(44, "dm")
+            .expect("query")
+            .expect("lane exists");
+        assert_eq!(lane.state, LaneState::WaitingReply);
+        assert_eq!(lane.codex_session_id.as_deref(), Some("thread-1"));
+        assert_eq!(lane.active_turn_id, None);
     }
 
     #[test]
@@ -2538,6 +2641,7 @@ mod tests {
         assert_eq!(lane.workspace_id, "docs");
         assert_eq!(lane.state, LaneState::Idle);
         assert_eq!(lane.codex_session_id, None);
+        assert_eq!(lane.active_turn_id, None);
         assert_eq!(lane.waiting_since_ms, None);
     }
 
@@ -2565,6 +2669,7 @@ mod tests {
             .expect("lane exists");
         assert_eq!(lane.state, LaneState::NeedsLocalApproval);
         assert_eq!(lane.codex_session_id.as_deref(), Some("session-1"));
+        assert_eq!(lane.active_turn_id, None);
         assert_eq!(lane.waiting_since_ms, None);
     }
 

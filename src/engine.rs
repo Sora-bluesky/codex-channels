@@ -8,13 +8,13 @@ use std::sync::{
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tokio::process::Command as TokioCommand;
-use tokio::sync::mpsc;
-use tokio::time::{Duration, sleep};
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::{Duration, sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::app_server::CodexThreadSummary;
-use crate::codex::{CodexRequest, CodexRunner};
+use crate::codex::{ActiveAppServerTurn, CodexFollowupRequest, CodexRequest, CodexRunner};
 use crate::config::{
     CodexTransport, Config, LaneMode, checks::CheckRunSummary, checks::run_profile,
 };
@@ -32,6 +32,7 @@ use crate::windows_secret::load_secret;
 const MAX_COMPLETION_REPAIR_TURNS: usize = 2;
 const MAX_TELEGRAM_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
 const MAX_INFINITE_AUTO_TURNS: usize = 16;
+const ACTIVE_FOLLOWUP_ACK_TIMEOUT: Duration = Duration::from_secs(75);
 const AUTO_CONTINUE_STOP_MARKER: &str = "CHANNEL_WAITING";
 const TELEGRAM_MESSAGE_CHAR_LIMIT: usize = 4096;
 
@@ -44,7 +45,7 @@ struct ActiveTurnRegistry {
 #[derive(Clone)]
 struct ActiveTurnSender {
     id: u64,
-    sender: mpsc::UnboundedSender<CodexRequest>,
+    sender: mpsc::UnboundedSender<CodexFollowupRequest>,
 }
 
 struct ActiveTurnGuard {
@@ -54,7 +55,13 @@ struct ActiveTurnGuard {
 }
 
 impl ActiveTurnRegistry {
-    fn register(&self, key: &str) -> (ActiveTurnGuard, mpsc::UnboundedReceiver<CodexRequest>) {
+    fn register(
+        &self,
+        key: &str,
+    ) -> (
+        ActiveTurnGuard,
+        mpsc::UnboundedReceiver<CodexFollowupRequest>,
+    ) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.inner.lock().expect("active turn registry").insert(
@@ -81,16 +88,25 @@ impl ActiveTurnRegistry {
             .contains_key(key)
     }
 
-    fn send_followup(&self, key: &str, request: CodexRequest) -> bool {
+    async fn send_followup(&self, key: &str, request: CodexRequest) -> Result<bool> {
         let sender = self
             .inner
             .lock()
             .expect("active turn registry")
             .get(key)
             .map(|entry| entry.sender.clone());
-        sender
-            .map(|sender| sender.send(request).is_ok())
-            .unwrap_or(false)
+        let Some(sender) = sender else {
+            return Ok(false);
+        };
+        let (ack, ack_receiver) = oneshot::channel();
+        if sender.send(CodexFollowupRequest { request, ack }).is_err() {
+            return Ok(false);
+        }
+        timeout(ACTIVE_FOLLOWUP_ACK_TIMEOUT, ack_receiver)
+            .await
+            .map_err(|_| anyhow!("active app-server follow-up timed out"))?
+            .map_err(|_| anyhow!("active app-server follow-up was canceled"))??;
+        Ok(true)
     }
 }
 
@@ -446,6 +462,9 @@ async fn handle_message(
                     &lane.lane_id,
                     lane.codex_session_id.as_deref(),
                 )];
+                if !running_keys.contains(&lane.lane_id) {
+                    running_keys.push(lane.lane_id.clone());
+                }
                 if let Some(binding) = saved_thread_binding.as_ref() {
                     let binding_key =
                         active_turn_key(&lane.lane_id, Some(&binding.codex_thread_id));
@@ -469,12 +488,33 @@ async fn handle_message(
                     let reply = if !update.attachments.is_empty() {
                         "処理中のターンへ送れる追加入力はテキストだけです。添付は完了後に送ってください。"
                         .to_owned()
-                    } else if active_turns
-                        .send_followup(running_key.as_str(), CodexRequest::new(update.text.clone()))
-                    {
-                        "追加入力をキューに入れました。現在の処理へ続けて渡します。".to_owned()
                     } else {
-                        "現在の処理が続いています。完了後にもう一度送ってください。".to_owned()
+                        match active_turns
+                            .send_followup(
+                                running_key.as_str(),
+                                CodexRequest::new(update.text.clone()),
+                            )
+                            .await
+                        {
+                            Ok(true) => {
+                                "画面上の保留入力へ追加しました。現在の処理に続けて渡されます。"
+                                    .to_owned()
+                            }
+                            Ok(false) => {
+                                "現在の処理が続いています。完了後にもう一度送ってください。"
+                                    .to_owned()
+                            }
+                            Err(error) => {
+                                warn!("failed to steer live app-server turn: {error:#}");
+                                store.update_lane_state(
+                                    &lane.lane_id,
+                                    LaneState::WaitingReply,
+                                    lane.codex_session_id.as_deref(),
+                                )?;
+                                "画面上の保留入力へ追加できませんでした。完了後にもう一度送ってください。"
+                                    .to_owned()
+                            }
+                        }
                     };
                     let sent = telegram.send_message(update.chat_id, &reply).await?;
                     store.insert_message(
@@ -488,8 +528,46 @@ async fn handle_message(
                     )?;
                     return Ok(());
                 }
-                // The bridge may have restarted while storage still says the lane is running.
-                // In that case, handle this message as a fresh request instead of blocking it.
+                store.insert_message(
+                    &lane.lane_id,
+                    None,
+                    "inbound",
+                    "telegram_steer",
+                    Some(update.telegram_message_id),
+                    Some(&update.text),
+                    Some(&update.payload_json),
+                )?;
+                let reply = if !update.attachments.is_empty() {
+                    "処理中のターンへ送れる追加入力はテキストだけです。添付は完了後に送ってください。"
+                        .to_owned()
+                } else if lane.active_turn_id.is_some() {
+                    store.update_lane_state(
+                        &lane.lane_id,
+                        LaneState::WaitingReply,
+                        lane.codex_session_id.as_deref(),
+                    )?;
+                    "実行中ターンの読み取りを再接続できません。完了後にもう一度送ってください。"
+                        .to_owned()
+                } else {
+                    store.update_lane_state(
+                        &lane.lane_id,
+                        LaneState::WaitingReply,
+                        lane.codex_session_id.as_deref(),
+                    )?;
+                    "実行中ターンの識別子を復元できません。完了後にもう一度送ってください。"
+                        .to_owned()
+                };
+                let sent = telegram.send_message(update.chat_id, &reply).await?;
+                store.insert_message(
+                    &lane.lane_id,
+                    None,
+                    "outbound",
+                    "telegram_steer_status",
+                    Some(sent.message_id),
+                    Some(&reply),
+                    None,
+                )?;
+                return Ok(());
             }
         }
     }
@@ -524,12 +602,29 @@ async fn handle_message(
                 let reply = if !update.attachments.is_empty() {
                     "処理中のターンへ送れる追加入力はテキストだけです。添付は完了後に送ってください。"
                         .to_owned()
-                } else if active_turns
-                    .send_followup(session_id, CodexRequest::new(update.text.clone()))
-                {
-                    "追加入力をキューに入れました。現在の処理へ続けて渡します。".to_owned()
                 } else {
-                    "現在の処理が続いています。完了後にもう一度送ってください。".to_owned()
+                    match active_turns
+                        .send_followup(session_id, CodexRequest::new(update.text.clone()))
+                        .await
+                    {
+                        Ok(true) => {
+                            "画面上の保留入力へ追加しました。現在の処理に続けて渡されます。"
+                                .to_owned()
+                        }
+                        Ok(false) => {
+                            "現在の処理が続いています。完了後にもう一度送ってください。".to_owned()
+                        }
+                        Err(error) => {
+                            warn!("failed to steer live app-server turn: {error:#}");
+                            store.update_lane_state(
+                                &lane.lane_id,
+                                LaneState::WaitingReply,
+                                selected_session_id.as_deref(),
+                            )?;
+                            "画面上の保留入力へ追加できませんでした。完了後にもう一度送ってください。"
+                                .to_owned()
+                        }
+                    }
                 };
                 let sent = telegram.send_message(update.chat_id, &reply).await?;
                 store.insert_message(
@@ -610,24 +705,70 @@ async fn handle_message(
     } else {
         None
     };
+    let turn_sender = if config.codex.transport == CodexTransport::AppServer {
+        let (sender, mut receiver) = mpsc::unbounded_channel::<ActiveAppServerTurn>();
+        let lane_id = lane.lane_id.clone();
+        let run_id = run.run_id.clone();
+        let store = store.clone();
+        tokio::spawn(async move {
+            if let Some(turn) = receiver.recv().await {
+                let result = store.update_lane_active_turn(
+                    &lane_id,
+                    &run_id,
+                    &turn.thread_id,
+                    &turn.turn_id,
+                );
+                if let Err(error) = &result {
+                    warn!("failed to persist active app-server turn: {error:#}");
+                }
+                let _ = turn.ack.send(result);
+            }
+        });
+        Some(sender)
+    } else {
+        None
+    };
     let mut active_turn_guard = None;
-    let initial_outcome = if let Some(session_id) = selected_session_id.as_deref() {
+    let initial_result = if let Some(session_id) = selected_session_id.as_deref() {
         if let Some((guard, followups)) = active_turn {
             active_turn_guard = Some(guard);
             codex
-                .resume_with_followups(workspace, session_id, request, Some(followups))
-                .await?
+                .resume_with_followups_and_turn_sender(
+                    workspace,
+                    session_id,
+                    request,
+                    Some(followups),
+                    turn_sender,
+                )
+                .await
         } else {
-            codex.resume(workspace, session_id, request).await?
+            codex.resume(workspace, session_id, request).await
         }
     } else {
         if let Some((guard, followups)) = active_turn {
             active_turn_guard = Some(guard);
             codex
-                .start_with_followups(workspace, request, Some(followups))
-                .await?
+                .start_with_followups_and_turn_sender(
+                    workspace,
+                    request,
+                    Some(followups),
+                    turn_sender,
+                )
+                .await
         } else {
-            codex.start(workspace, request).await?
+            codex.start(workspace, request).await
+        }
+    };
+    let initial_outcome = match initial_result {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            store.update_lane_state(
+                &lane.lane_id,
+                LaneState::Failed,
+                selected_session_id.as_deref(),
+            )?;
+            store.finish_run(&run.run_id, None, LaneState::Failed.as_str(), false, 0, 0)?;
+            return Err(error);
         }
     };
     let (outcome, unresolved_checks, auto_turns_completed) =
@@ -2949,6 +3090,7 @@ mod tests {
             mode: LaneMode::AwaitReply,
             state: LaneState::WaitingReply,
             codex_session_id: Some("session-1".to_owned()),
+            active_turn_id: None,
             extra_turn_budget: 0,
             waiting_since_ms: Some(1),
         };
@@ -2967,6 +3109,7 @@ mod tests {
             mode: LaneMode::AwaitReply,
             state: LaneState::NeedsLocalApproval,
             codex_session_id: Some("session-1".to_owned()),
+            active_turn_id: None,
             extra_turn_budget: 0,
             waiting_since_ms: None,
         };
@@ -3448,6 +3591,7 @@ mod tests {
             mode: LaneMode::AwaitReply,
             state: LaneState::WaitingReply,
             codex_session_id: Some("live-thread".to_owned()),
+            active_turn_id: None,
             extra_turn_budget: 0,
             waiting_since_ms: None,
         };
@@ -3480,6 +3624,7 @@ mod tests {
             mode: LaneMode::AwaitReply,
             state: LaneState::WaitingReply,
             codex_session_id: None,
+            active_turn_id: None,
             extra_turn_budget: 0,
             waiting_since_ms: None,
         };
@@ -3574,7 +3719,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn running_app_server_lane_steers_followup_to_active_turn() {
+    async fn running_app_server_lane_steers_followup_to_visible_pending_input() {
         let dir = tempdir().expect("tempdir should be created");
         let store = Store::open(dir.path().join("bridge.db")).expect("store should open");
         let mut config = test_config();
@@ -3590,7 +3735,7 @@ mod tests {
         let active_turns = ActiveTurnRegistry::default();
         let (_guard, mut receiver) = active_turns.register("thread-1");
 
-        handle_message(
+        let handle = handle_message(
             &config,
             &store,
             &telegram,
@@ -3610,19 +3755,23 @@ mod tests {
                 control_command_override: None,
                 payload_json: "{}".to_owned(),
             },
-        )
-        .await
-        .expect("follow-up should steer");
+        );
+        tokio::pin!(handle);
 
-        let followup = receiver.try_recv().expect("follow-up should be queued");
-        assert_eq!(followup.prompt, "use the shorter path");
+        let followup = tokio::select! {
+            result = &mut handle => panic!("handler ended before follow-up: {result:?}"),
+            followup = receiver.recv() => followup.expect("follow-up should become pending input"),
+        };
+        assert_eq!(followup.request.prompt, "use the shorter path");
+        let _ = followup.ack.send(Ok(()));
+        handle.await.expect("follow-up should steer");
         let sent_messages = telegram.sent_messages();
         assert_eq!(sent_messages.len(), 1);
-        assert!(sent_messages[0].text.contains("キュー"));
+        assert!(sent_messages[0].text.contains("保留入力"));
     }
 
     #[tokio::test]
-    async fn running_app_server_lane_uses_bound_thread_for_followup_queue() {
+    async fn running_app_server_lane_uses_bound_thread_for_visible_pending_input() {
         let dir = tempdir().expect("tempdir should be created");
         let store = Store::open(dir.path().join("bridge.db")).expect("store should open");
         let mut config = test_config();
@@ -3650,7 +3799,7 @@ mod tests {
         let active_turns = ActiveTurnRegistry::default();
         let (_guard, mut receiver) = active_turns.register("saved-thread");
 
-        handle_message(
+        let handle = handle_message(
             &config,
             &store,
             &telegram,
@@ -3670,15 +3819,19 @@ mod tests {
                 control_command_override: None,
                 payload_json: "{}".to_owned(),
             },
-        )
-        .await
-        .expect("follow-up should queue by bound thread");
+        );
+        tokio::pin!(handle);
 
-        let followup = receiver.try_recv().expect("follow-up should be queued");
-        assert_eq!(followup.prompt, "keep going");
+        let followup = tokio::select! {
+            result = &mut handle => panic!("handler ended before follow-up: {result:?}"),
+            followup = receiver.recv() => followup.expect("follow-up should become pending input"),
+        };
+        assert_eq!(followup.request.prompt, "keep going");
+        let _ = followup.ack.send(Ok(()));
+        handle.await.expect("follow-up should use bound thread");
         let sent_messages = telegram.sent_messages();
         assert_eq!(sent_messages.len(), 1);
-        assert!(sent_messages[0].text.contains("キュー"));
+        assert!(sent_messages[0].text.contains("保留入力"));
     }
 
     #[tokio::test]
@@ -3710,7 +3863,7 @@ mod tests {
         let active_turns = ActiveTurnRegistry::default();
         let (_guard, mut receiver) = active_turns.register(&lane.lane_id);
 
-        handle_message(
+        let handle = handle_message(
             &config,
             &store,
             &telegram,
@@ -3730,15 +3883,80 @@ mod tests {
                 control_command_override: None,
                 payload_json: "{}".to_owned(),
             },
-        )
-        .await
-        .expect("follow-up should use live turn");
+        );
+        tokio::pin!(handle);
 
-        let followup = receiver.try_recv().expect("follow-up should be queued");
-        assert_eq!(followup.prompt, "use this follow-up");
+        let followup = tokio::select! {
+            result = &mut handle => panic!("handler ended before follow-up: {result:?}"),
+            followup = receiver.recv() => followup.expect("follow-up should become pending input"),
+        };
+        assert_eq!(followup.request.prompt, "use this follow-up");
+        let _ = followup.ack.send(Ok(()));
+        handle.await.expect("follow-up should use live turn");
         let sent_messages = telegram.sent_messages();
         assert_eq!(sent_messages.len(), 1);
-        assert!(sent_messages[0].text.contains("キュー"));
+        assert!(sent_messages[0].text.contains("保留入力"));
+    }
+
+    #[tokio::test]
+    async fn running_app_server_lane_rejects_stale_stored_turn_without_live_reader() {
+        let dir = tempdir().expect("tempdir should be created");
+        let store = Store::open(dir.path().join("bridge.db")).expect("store should open");
+        let mut config = test_config();
+        config.codex.transport = CodexTransport::AppServer;
+        let codex = CodexRunner::new(config.codex.clone());
+        let telegram = MockTelegram::default();
+        let lane = store
+            .get_or_create_lane(10, "dm", "main", LaneMode::AwaitReply, 0)
+            .expect("lane should exist");
+        let run = store
+            .insert_run(NewRun {
+                lane_id: lane.lane_id.clone(),
+                run_kind: "telegram".to_owned(),
+            })
+            .expect("run should exist");
+        store
+            .update_lane_state(&lane.lane_id, LaneState::Running, Some("thread-1"))
+            .expect("lane should update");
+        store
+            .update_lane_active_turn(&lane.lane_id, &run.run_id, "thread-1", "turn-1")
+            .expect("active turn should persist");
+        let active_turns = ActiveTurnRegistry::default();
+
+        handle_message(
+            &config,
+            &store,
+            &telegram,
+            &codex,
+            &active_turns,
+            77,
+            IncomingMessage {
+                update_id: 1,
+                chat_id: 10,
+                chat_type: "private".to_owned(),
+                sender_id: Some(77),
+                text: "continue this".to_owned(),
+                attachments: Vec::new(),
+                telegram_message_id: 501,
+                thread_key: "dm".to_owned(),
+                callback_query_id: None,
+                control_command_override: None,
+                payload_json: "{}".to_owned(),
+            },
+        )
+        .await
+        .expect("stale turn should produce a user reply");
+
+        let sent_messages = telegram.sent_messages();
+        assert_eq!(sent_messages.len(), 1);
+        assert!(sent_messages[0].text.contains("再接続できません"));
+        assert!(!sent_messages[0].text.contains("追加しました"));
+        let lane = store
+            .find_lane(10, "dm")
+            .expect("lane query")
+            .expect("lane should exist");
+        assert_eq!(lane.state, LaneState::WaitingReply);
+        assert_eq!(lane.active_turn_id, None);
     }
 
     fn saved_attachment(
