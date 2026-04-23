@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::warn;
 
 use crate::app_server::{AppServerClient, CodexApprovalRequest, CodexThreadSummary};
@@ -32,6 +32,17 @@ pub struct CodexOutcome {
 pub struct CodexRequest {
     pub prompt: String,
     pub image_paths: Vec<PathBuf>,
+}
+
+pub struct CodexFollowupRequest {
+    pub request: CodexRequest,
+    pub ack: oneshot::Sender<Result<()>>,
+}
+
+pub struct ActiveAppServerTurn {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub ack: oneshot::Sender<Result<()>>,
 }
 
 impl CodexRequest {
@@ -106,7 +117,18 @@ impl CodexRunner {
         &self,
         workspace: &WorkspaceConfig,
         request: impl Into<CodexRequest>,
-        followups: Option<mpsc::UnboundedReceiver<CodexRequest>>,
+        followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
+    ) -> Result<CodexOutcome> {
+        self.start_with_followups_and_turn_sender(workspace, request, followups, None)
+            .await
+    }
+
+    pub async fn start_with_followups_and_turn_sender(
+        &self,
+        workspace: &WorkspaceConfig,
+        request: impl Into<CodexRequest>,
+        followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
+        turn_sender: Option<mpsc::UnboundedSender<ActiveAppServerTurn>>,
     ) -> Result<CodexOutcome> {
         match self.config.transport {
             CodexTransport::Exec => {
@@ -119,7 +141,13 @@ impl CodexRunner {
                 client
                     .as_mut()
                     .expect("app-server should exist")
-                    .start_turn(&self.config, workspace, request.into(), followups)
+                    .start_turn(
+                        &self.config,
+                        workspace,
+                        request.into(),
+                        followups,
+                        turn_sender,
+                    )
                     .await
             }
         }
@@ -140,7 +168,19 @@ impl CodexRunner {
         workspace: &WorkspaceConfig,
         session_id: &str,
         request: impl Into<CodexRequest>,
-        followups: Option<mpsc::UnboundedReceiver<CodexRequest>>,
+        followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
+    ) -> Result<CodexOutcome> {
+        self.resume_with_followups_and_turn_sender(workspace, session_id, request, followups, None)
+            .await
+    }
+
+    pub async fn resume_with_followups_and_turn_sender(
+        &self,
+        workspace: &WorkspaceConfig,
+        session_id: &str,
+        request: impl Into<CodexRequest>,
+        followups: Option<mpsc::UnboundedReceiver<CodexFollowupRequest>>,
+        turn_sender: Option<mpsc::UnboundedSender<ActiveAppServerTurn>>,
     ) -> Result<CodexOutcome> {
         match self.config.transport {
             CodexTransport::Exec => {
@@ -164,6 +204,7 @@ impl CodexRunner {
                         session_id,
                         request.into(),
                         followups,
+                        turn_sender,
                     )
                     .await
             }
