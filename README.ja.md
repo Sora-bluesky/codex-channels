@@ -59,14 +59,16 @@ npm install -g remotty
 ```
 
 その後、Codex App の Plugins 画面を開きます。
-`remotty` に更新ボタンがあれば押します。
-出ない場合は、ローカルプラグインを入れ直してください。
-画面内のプラグイン元は `remotty local plugins` です。
+画面内のプラグイン元で `remotty local plugins` を選びます。
+その中から `remotty` を入れます。
+
+インストール済みのプラグインが反応しない場合も、今のチャットは閉じません。
+その時は、クイックスタートの PowerShell 手順で進めます。
 
 ## 主なコマンド
 
-Codex App では、チャット欄で `@` を入力します。
-候補から `remotty` を選び、次のように依頼します。
+Codex App では、先に `remotty` プラグインを入れます。
+その後、通常のチャットとして次のように依頼します。
 
 ```text
 Telegram bot token を保存して
@@ -84,6 +86,7 @@ Codex App のチャット欄には貼らないでください。
 Codex CLI を使う場合は、PowerShell から同じ設定を行えます。
 どちらの場合も、ブリッジはローカルの `codex` 実行ファイルを呼びます。
 PowerShell のコマンドは、クイックスタートに載せています。
+Codex App のプラグインが反応しない場合も、同じ PowerShell 手順を使います。
 
 Telegram で使います。
 
@@ -100,7 +103,7 @@ Telegram で使います。
 
 ## 安全な情報の扱い
 
-- `@remotty` で bot token を保護領域へ保存する
+- `remotty` プラグインで bot token を保護領域へ保存する
 - `remotty` 専用の Telegram bot を使う
 - token を Codex App のチャット欄へ貼らない
 - token や `api.telegram.org/bot...` の URL を issue へ貼らない
