@@ -4,7 +4,11 @@
 
 ![remotty: Codex と Telegram をつなぐ Windows ブリッジ](docs/assets/hero.png)
 
-`remotty` は、Telegram から手元の Codex 作業を続けるためのツールです。
+`remotty` は、汎用の遠隔操作ツールではありません。
+Windows 上の Codex 作業を、普段使う Telegram から続けるためのブリッジです。
+
+`remotty` は、Telegram から Codex 作業の続きを進められるようにします。
+新しいモバイルアプリを入れる必要はありません。
 
 Telegram bot へメッセージを送ります。
 `remotty` が Windows PC で受け取り、選択した Codex スレッドへ渡します。
@@ -13,14 +17,6 @@ Telegram bot へメッセージを送ります。
 `remotty` は公開 webhook サーバを使いません。
 開いている Codex App 画面へキー入力もしません。
 ローカルの `codex` コマンドを通じて Codex とやり取りします。
-
-> [!WARNING]
-> **免責**
->
-> 本プロジェクトは、OpenAI の支援、承認、提携を受けていません。
-> `Codex`、`ChatGPT`、関連する名称は OpenAI の商標です。
-> ここでは、連携先のローカルツールを説明する目的でのみ使っています。
-> その他の商標は、それぞれの権利者に帰属します。
 
 ## できること
 
@@ -123,3 +119,12 @@ Telegram で使います。
 ## ライセンス
 
 [MIT](LICENSE)
+
+## 免責
+
+本プロジェクトは、非公式のコミュニティプロジェクトです。
+本プロジェクトは、OpenAI の支援、承認、提携を受けていません。
+
+`Codex`、`ChatGPT`、関連する名称は OpenAI の商標です。
+ここでは、連携先のローカルツールを説明する目的でのみ使っています。
+その他の商標は、それぞれの権利者に帰属します。
