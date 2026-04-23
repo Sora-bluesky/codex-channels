@@ -115,12 +115,14 @@ Set-Location C:\path\to\your\project
 
 ## 4. Register This Project (Once Per Project)
 
-In Codex App, select `@remotty`.
-Ask this while the target project is open:
+In Codex App, use a normal chat request while the target project is open.
+This requires the `remotty` plugin to be installed.
 
 ```text
 Register this project with remotty
 ```
+
+If the plugin does not respond, use the PowerShell command below.
 
 Codex CLI users run this from the project folder:
 
@@ -150,14 +152,15 @@ Do not post the token in chat, screenshots, issues, or pull requests.
 
 ## 6. Store the Bot Token (Once, Or When Replacing It)
 
-In Codex App, select `@remotty`.
-This does not save the token in the open repository.
-After you store it once, the same Windows user can reuse it.
-Run this again only when you want to replace the token.
+In Codex App, ask:
 
 ```text
 Store the Telegram bot token
 ```
+
+This does not save the token in the open repository.
+After you store it once, the same Windows user can reuse it.
+Run this again only when you want to replace the token.
 
 `remotty` opens a PowerShell window for hidden token input.
 Enter the token only in that PowerShell window.
@@ -179,13 +182,14 @@ It is reused even when you work in another project.
 
 ## 7. Start the Bridge (When You Use It)
 
-In Codex App, select `@remotty`.
-Startup uses `%APPDATA%\remotty\bridge.toml`.
-It does not put runtime files in the open repository:
+In Codex App, ask:
 
 ```text
 Start the bridge
 ```
+
+Startup uses `%APPDATA%\remotty\bridge.toml`.
+It does not put runtime files in the open repository:
 
 Codex CLI users run:
 
@@ -202,7 +206,7 @@ If it stops, the bot cannot reply.
 Send any message to your bot in a private Telegram chat.
 
 The bot replies with a `remotty pairing code`.
-In Codex App, select `@remotty` and ask:
+In Codex App, ask:
 
 ```text
 Pair with code <code>
@@ -215,7 +219,7 @@ remotty telegram access-pair <code> --config $configPath
 ```
 
 Then check the allowlist.
-In Codex App, select `@remotty` and ask:
+In Codex App, ask:
 
 ```text
 Lock down Telegram access to the allowlist
@@ -231,7 +235,7 @@ This prevents other Telegram users from controlling your local Codex setup.
 
 ## 9. Select a Codex Thread (Per Telegram Chat)
 
-In Codex App, select `@remotty` and ask:
+In Codex App, ask:
 
 ```text
 List Codex threads
@@ -300,7 +304,7 @@ The decision is returned to the same Codex turn.
 
 > Q. Can anyone control my Codex session?
 >
-> A. No. Only paired senders are allowed. After pairing, ask `@remotty` to lock down access to the allowlist.
+> A. No. Only paired senders are allowed. After pairing, ask the `remotty` plugin to lock down access to the allowlist.
 > This keeps access limited to configured senders.
 
 > Q. Is approving from Telegram safe?
@@ -313,14 +317,17 @@ The decision is returned to the same Codex turn.
 
 > Q. What if the token may have leaked?
 >
-> A. Regenerate it with `@BotFather`. Then ask `@remotty` to save the new token.
+> A. Regenerate it with `@BotFather`. Then ask the `remotty` plugin to save the new token.
 
 ### Connection Q&A
 
-> Q. `@remotty` does not appear in the current Codex App chat.
+> Q. The `remotty` plugin is installed, but `@remotty` does not appear in chat.
 >
 > A. Keep the current chat open.
-> In PowerShell, move to the project folder first:
+> You do not need an `@remotty` mention.
+> Try the same request as normal chat text.
+> If that does not trigger the plugin, use PowerShell.
+> Move to the project folder first:
 >
 > ```powershell
 > Set-Location C:\path\to\your-project
@@ -334,11 +341,11 @@ The decision is returned to the same Codex turn.
 >
 > This registers the project without creating files in the project root.
 > Then continue the remaining setup from PowerShell.
-> If `@remotty` appears later in Codex App, you can return there.
+> If the plugin starts responding later in Codex App, you can return there.
 
 > Q. The bot does not reply.
 >
-> A. First confirm the bridge is still running. In Codex App, ask `@remotty` to check status. In PowerShell, run `remotty service status` and `remotty telegram live-env-check --config $configPath`. If the webhook status is `webhook-configured`, switch the bot back to polling.
+> A. First confirm the bridge is still running. In Codex App, ask the `remotty` plugin to check status. In PowerShell, run `remotty service status` and `remotty telegram live-env-check --config $configPath`. If the webhook status is `webhook-configured`, switch the bot back to polling.
 
 > Q. I get a polling conflict.
 >
@@ -358,13 +365,13 @@ Stop-Process -Id <PID>
 
 > Q. The pairing code does not work.
 >
-> A. Send the message in a private chat with the bot. Use the newest code. Ask `@remotty` to pair before the code expires.
+> A. Send the message in a private chat with the bot. Use the newest code. Ask the `remotty` plugin to pair before the code expires.
 
 ### Thread Selection Q&A
 
 > Q. No Codex threads appear.
 >
-> A. Update Codex CLI, then try again. Start at least one Codex App or Codex CLI thread. Ask `@remotty` to list threads again.
+> A. Update Codex CLI, then try again. Start at least one Codex App or Codex CLI thread. Ask the `remotty` plugin to list threads again.
 
 ## Related
 

@@ -114,8 +114,9 @@ Set-Location C:\path\to\your\project
 
 ## 4. このプロジェクトを登録する（同じプロジェクトでは初回だけ）
 
-Codex App では、`@remotty` を選びます。
-対象プロジェクトを開いた状態で、次のように依頼します。
+Codex App では、対象プロジェクトを開いた状態で依頼します。
+この方法には、`remotty` プラグインのインストールが必要です。
+プラグインが反応しない場合は、下の PowerShell コマンドを使います。
 
 ```text
 このプロジェクトを remotty に登録して
@@ -149,14 +150,15 @@ token をチャット、スクリーンショット、issue、PR に貼らない
 
 ## 6. bot token を保存する（初回だけ／token 変更時）
 
-Codex App では、`@remotty` を選びます。
-この操作は、今開いているリポジトリへ token を保存しません。
-一度保存すれば、同じ Windows ユーザーでは再利用できます。
-token を変える時だけ、もう一度実行します。
+Codex App では、次のように依頼します。
 
 ```text
 Telegram bot token を保存して
 ```
+
+この操作は、今開いているリポジトリへ token を保存しません。
+一度保存すれば、同じ Windows ユーザーでは再利用できます。
+token を変える時だけ、もう一度実行します。
 
 `remotty` は、隠し入力用の PowerShell を開きます。
 token は、その PowerShell にだけ入力します。
@@ -177,13 +179,14 @@ remotty telegram configure --config $configPath
 
 ## 7. ブリッジを起動する（使うたび）
 
-Codex App では、`@remotty` を選びます。
-起動時は `%APPDATA%\remotty\bridge.toml` の設定を使います。
-今開いているリポジトリへ状態ファイルは置きません。
+Codex App では、次のように依頼します。
 
 ```text
 ブリッジを起動して
 ```
+
+起動時は `%APPDATA%\remotty\bridge.toml` の設定を使います。
+今開いているリポジトリへ状態ファイルは置きません。
 
 Codex CLI では、次を実行します。
 
@@ -200,7 +203,6 @@ Telegram から使う間は、ブリッジを起動したままにします。
 Telegram の private chat で、bot へ任意のメッセージを送ります。
 
 bot は `remotty pairing code` を返します。
-Codex App では、`@remotty` を選びます。
 次のように依頼します。
 
 ```text
@@ -214,7 +216,7 @@ remotty telegram access-pair <code> --config $configPath
 ```
 
 次に、送信者を許可します。
-Codex App では、`@remotty` を選びます。
+Codex App では、次のように依頼します。
 
 ```text
 Telegram の allowlist を有効化して
@@ -230,8 +232,7 @@ remotty telegram policy allowlist --config $configPath
 
 ## 9. Codex スレッドを選ぶ（Telegram チャットごと）
 
-Codex App では、`@remotty` を選びます。
-次のように依頼します。
+Codex App では、次のように依頼します。
 
 ```text
 Codex スレッドを表示して
@@ -300,7 +301,7 @@ Codex が承認を求めると、`remotty` は Telegram へ中継します。
 
 > Q. 誰でも私の Codex を操作できますか?
 >
-> A. できません。ペアリングした送信者だけを許可します。ペアリング後は `@remotty` で allowlist の有効化を依頼してください。
+> A. できません。ペアリングした送信者だけを許可します。ペアリング後は `remotty` プラグインへ allowlist の有効化を依頼してください。
 > これにより、設定済みの送信者だけが操作できます。
 
 > Q. Telegram から承認操作を押しても安全ですか?
@@ -313,13 +314,16 @@ Codex が承認を求めると、`remotty` は Telegram へ中継します。
 
 > Q. token が漏れたかもしれない時は?
 >
-> A. Telegram の `@BotFather` で token を再発行してください。その後、`@remotty` で新しい token の保存を依頼します。
+> A. Telegram の `@BotFather` で token を再発行してください。その後、`remotty` プラグインへ新しい token の保存を依頼します。
 
 ### 接続の Q&A
 
-> Q. 現在の Codex App チャットで `@remotty` が出ません。
+> Q. `remotty` プラグインを入れたのに、チャットで `@remotty` が出ません。
 >
 > A. 今のチャットは閉じないでください。
+> `@remotty` の表示は必須ではありません。
+> まずは同じ依頼を通常のチャット文として送ります。
+> 反応しない場合は、PowerShell を使います。
 > PowerShell で、対象プロジェクトへ先に移動します。
 >
 > ```powershell
@@ -334,11 +338,11 @@ Codex が承認を求めると、`remotty` は Telegram へ中継します。
 >
 > この操作は、プロジェクトのルートにファイルを作りません。
 > 残りの設定も PowerShell で進められます。
-> 後で Codex App に `@remotty` が出たら、そこへ戻れます。
+> 後で Codex App 側でプラグインが反応したら、そこへ戻れます。
 
 > Q. bot が返信しません。
 >
-> A. まずブリッジが動いているか確認します。Codex App では `@remotty` で状態確認を依頼します。PowerShell では `remotty service status` と `remotty telegram live-env-check --config $configPath` を実行します。webhook 状態が `webhook-configured` なら polling へ戻します。
+> A. まずブリッジが動いているか確認します。Codex App では `remotty` プラグインへ状態確認を依頼します。PowerShell では `remotty service status` と `remotty telegram live-env-check --config $configPath` を実行します。webhook 状態が `webhook-configured` なら polling へ戻します。
 
 > Q. polling 競合が出ます。
 >
@@ -358,13 +362,13 @@ Stop-Process -Id <PID>
 
 > Q. pairing code が通りません。
 >
-> A. bot との private chat で送ってください。最新の code を使います。期限切れ前に `@remotty` でペアリングを依頼してください。
+> A. bot との private chat で送ってください。最新の code を使います。期限切れ前に `remotty` プラグインへペアリングを依頼してください。
 
 ### スレッド選択の Q&A
 
 > Q. Codex スレッドが出ません。
 >
-> A. Codex CLI を更新してから、もう一度試します。Codex App か Codex CLI でスレッドを作ります。その後、`@remotty` で一覧を依頼します。
+> A. Codex CLI を更新してから、もう一度試します。Codex App か Codex CLI でスレッドを作ります。その後、`remotty` プラグインへ一覧を依頼します。
 
 ## 関連
 

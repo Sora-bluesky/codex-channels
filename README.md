@@ -63,14 +63,16 @@ npm install -g remotty
 ```
 
 Then open the Codex App Plugins screen.
-If `remotty` shows an update button, press it.
-If no update is shown, remove the plugin and install it again.
 Choose `remotty local plugins` as the plugin source in that screen.
+Install `remotty` from that source.
+
+If the installed plugin does not respond in chat, keep the current chat open.
+Then use the PowerShell fallback in the quickstart.
 
 ## Main Commands
 
-If you use Codex App, type `@` in the chat box.
-Select `remotty`, then ask for the task:
+If you use Codex App, install the `remotty` plugin first.
+Then ask for the task in normal chat:
 
 ```text
 Store the Telegram bot token
@@ -88,6 +90,7 @@ Do not paste the token into Codex App chat.
 If you use Codex CLI, run the same setup from PowerShell.
 The bridge calls the local `codex` executable in both cases.
 See the quickstart for the PowerShell commands.
+Use the same PowerShell commands if the Codex App plugin does not respond.
 
 Run these in Telegram:
 
@@ -104,7 +107,7 @@ Run these in Telegram:
 
 ## Security
 
-- Use `@remotty` so bot tokens stay in Windows protected storage.
+- Use the `remotty` plugin so bot tokens stay in Windows protected storage.
 - Use a dedicated Telegram bot for `remotty`.
 - Do not paste bot tokens into Codex App chat.
 - Do not paste bot tokens or `api.telegram.org/bot...` URLs into issues.
