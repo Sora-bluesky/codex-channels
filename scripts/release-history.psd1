@@ -327,5 +327,16 @@
                 "Updated the release bump script so future plugin versions are changed with the package version."
             )
         }
+        @{
+            Version = "0.2.10"
+            Commit = "218720c3e952d7efa1ca28cf0a84c5486ff5c944"
+            Title = "Active follow-up queueing"
+            Notes = @(
+                "Queued Telegram text follow-ups while the selected app-server turn is still active."
+                "Recovered stale running lanes after a bridge restart instead of blocking the next message."
+                "Added tests for saved-thread follow-ups, live turn lookup precedence, and stale lane recovery."
+                "Published matching Cargo, npm, and Codex plugin metadata for v0.2.10."
+            )
+        }
     )
 }
