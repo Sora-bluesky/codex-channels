@@ -4,7 +4,12 @@
 
 ![remotty: Windows bridge for Codex and Telegram](docs/assets/hero.png)
 
-`remotty` lets you continue local Codex work from Telegram.
+`remotty` is not a general-purpose remote control tool.
+It is a bridge for continuing Codex work on Windows from the Telegram app you
+already use.
+
+`remotty` lets you continue Codex work from Telegram.
+There is no new mobile app to install.
 
 You send a message to your Telegram bot. `remotty` receives it on your Windows
 PC, sends it to the selected Codex thread, and returns the reply to the same
@@ -13,15 +18,6 @@ Telegram chat.
 `remotty` does not expose a public webhook server. It also does not type into
 the open Codex App window. It talks to local Codex through the local `codex`
 command.
-
-> [!WARNING]
-> **Disclaimer**
->
-> This is an unofficial community project. It is not affiliated with,
-> endorsed by, or sponsored by OpenAI.
-> `Codex`, `ChatGPT`, and related marks are trademarks of OpenAI.
-> They are referenced here only to describe the local tools that `remotty`
-> works with. All other trademarks belong to their owners.
 
 ## What It Does
 
@@ -128,3 +124,12 @@ Telegram.
 ## License
 
 [MIT](LICENSE)
+
+## Disclaimer
+
+This is an unofficial community project. It is not affiliated with, endorsed by,
+or sponsored by OpenAI.
+
+`Codex`, `ChatGPT`, and related marks are trademarks of OpenAI.
+They are referenced here only to describe the local tools that `remotty` works
+with. All other trademarks belong to their owners.
